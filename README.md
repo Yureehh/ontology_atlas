@@ -2,9 +2,16 @@
 
 Company Ontology Suite is a local-first Python package that turns a repository into
 a Graphify-powered ontology asset: curated knowledge graph, Neo4j demo graph,
-generated markdown wiki, local visual portal, and GraphRAG-ready API surface.
+generated markdown wiki, local visual portal, and GraphRAG-ready graph + wiki artifacts.
 
 The package is installable with UV and exposes the `ontology-agent` CLI.
+
+![Ontology portal — structured data graph](docs/assets/data-graph.svg)
+
+<sub>The portal's data-graph view (exported straight from the portal as SVG). Nodes are
+clustered by community/type and ranked by importance; the live page adds search across every
+entity, click-through evidence, a Graphify intelligence dashboard, and a run-to-run Changes
+diff. Run `ontology-agent portal serve` to explore it interactively.</sub>
 
 ## What It Produces
 

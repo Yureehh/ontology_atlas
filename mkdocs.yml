@@ -1,0 +1,55 @@
+site_name: Company Ontology Agent
+site_description: Local-first company asset for project ontology graphs and generated knowledge wikis
+repo_url: ""
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.instant
+    - content.code.copy
+    - content.action.edit
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Current Status: getting-started/current-status.md
+      - Install: getting-started/install.md
+      - Quickstart: getting-started/quickstart.md
+      - Environment: getting-started/environment.md
+      - Graphify: getting-started/graphify.md
+      - OpenAI: getting-started/openai.md
+      - Neo4j Desktop: getting-started/neo4j-desktop.md
+      - Portal And Wiki: getting-started/portal-and-wiki.md
+      - Progressive Updates: getting-started/progressive-updates.md
+      - SlideSmith POC: getting-started/slidesmith-poc.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Data Model: architecture/data-model.md
+      - Pipeline: architecture/pipeline.md
+      - Portal: architecture/portal.md
+      - Graph Intelligence: architecture/graph-intelligence.md
+      - GraphRAG Readiness: architecture/graph-rag.md
+  - Reference:
+      - CLI: reference/cli.md
+      - Configuration: reference/configuration.md
+      - Structured Data: reference/structured-data.md
+      - Generated Project: reference/generated-project.md
+      - Caveats: reference/caveats.md
+  - Operations:
+      - Runbooks: operations/runbooks.md
+      - Troubleshooting: operations/troubleshooting.md
+      - CI/CD: operations/ci-cd.md
+  - Development:
+      - Quality Gates: development/quality-gates.md
+      - Scheduled Releases: development/scheduled-releases.md
+      - Roadmap: development/roadmap.md

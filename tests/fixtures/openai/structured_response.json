@@ -1,0 +1,14 @@
+{
+  "entities": [
+    {"name": "Neo4j", "type": "Technology", "aliases": []},
+    {"name": "Use Neo4j as canonical graph", "type": "Decision", "aliases": []}
+  ],
+  "assertions": [
+    {
+      "subject": "Use Neo4j as canonical graph",
+      "predicate": "mentions",
+      "object": "Neo4j",
+      "confidence": 0.93
+    }
+  ]
+}

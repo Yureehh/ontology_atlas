@@ -1,0 +1,65 @@
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "company-ontology-agent"
+version = "0.1.0"
+description = "Local-first company ontology agent asset"
+readme = "README.md"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  "graphifyy[openai,neo4j,pdf]>=0.8.38,<0.9.0",
+  "markdown-it-py>=3.0",
+  "neo4j>=5.20",
+  "openai>=2.0",
+  "pydantic>=2.7",
+  "pypdf>=4.2",
+  "pyshacl>=0.26",
+  "pyyaml>=6.0",
+  "rdflib>=7.0",
+  "typer>=0.12",
+]
+
+[project.optional-dependencies]
+parquet = [
+  "pyarrow>=16",
+]
+dev = [
+  "mkdocs>=1.6,<2.0",
+  "mkdocs-material>=9.5,<9.7",
+  "mypy>=1.10",
+  "pre-commit>=4.0",
+  "pyarrow>=16",
+  "pytest>=8.2",
+  "ruff>=0.5",
+  "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+ontology-agent = "company_ontology_agent.cli.main:app"
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+files = ["src/company_ontology_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "neo4j: tests requiring a live Neo4j database",
+]

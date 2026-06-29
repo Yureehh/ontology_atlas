@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {"id": "n1", "label": "Neo4j", "type": "Technology"},
+    {"id": "n2", "label": "Graphify", "type": "Technology"},
+    {"id": "n3", "label": "Use Neo4j as canonical graph", "type": "Decision"}
+  ],
+  "edges": [
+    {
+      "source": "n3",
+      "target": "n1",
+      "type": "mentions",
+      "confidence": 0.91,
+      "evidence": "Decision: Use Neo4j as canonical graph."
+    },
+    {
+      "source": "n3",
+      "target": "n2",
+      "relationship": "mentions",
+      "confidence": 0.88,
+      "evidence": "Graphify helps bootstrap extraction."
+    }
+  ]
+}

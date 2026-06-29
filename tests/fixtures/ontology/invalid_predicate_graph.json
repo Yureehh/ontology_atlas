@@ -1,0 +1,9 @@
+{
+  "nodes": [
+    {"id": "n1", "label": "Neo4j", "type": "Technology"},
+    {"id": "n2", "label": "Graphify", "type": "Technology"}
+  ],
+  "edges": [
+    {"source": "n1", "target": "n2", "type": "unsupported_predicate", "confidence": 0.9}
+  ]
+}

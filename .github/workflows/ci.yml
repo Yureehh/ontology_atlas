@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync dependencies
+        run: uv sync --extra dev
+      - name: Tests
+        run: uv run --extra dev pytest
+      - name: Ruff
+        run: uv run --extra dev ruff check .
+      - name: Mypy
+        run: uv run --extra dev mypy src/company_ontology_agent
+      - name: Docs
+        run: uv run --extra dev mkdocs build --strict
+      - name: Build package
+        run: uv build
+
+  neo4j-integration:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        ports:
+          - 7474:7474
+          - 7687:7687
+        env:
+          NEO4J_AUTH: neo4j/ontology-password
+        options: >-
+          --health-cmd "wget -O /dev/null -q http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync dependencies
+        run: uv sync --extra dev
+      - name: Neo4j tests
+        env:
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_DATABASE: neo4j
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: ontology-password
+        run: uv run --extra dev pytest -m neo4j

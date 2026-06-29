@@ -1,0 +1,18 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --extra dev ruff check .
+        language: system
+        pass_filenames: false
+      - id: mypy
+        name: mypy
+        entry: uv run --extra dev mypy src/company_ontology_agent
+        language: system
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: uv run --extra dev pytest
+        language: system
+        pass_filenames: false

@@ -1,0 +1,12 @@
+{
+  "messages": [
+    {
+      "speaker": "Alice",
+      "text": "Decision: Use Graphify for bootstrap extraction."
+    },
+    {
+      "speaker": "Bob",
+      "text": "Requirement: Keep Neo4j as the canonical graph."
+    }
+  ]
+}

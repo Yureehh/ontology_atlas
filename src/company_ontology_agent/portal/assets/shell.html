@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>__TITLE__</title>
+  <style>__CSS__</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>__TITLE__</h1>
+      <p class="subtitle">__SUBTITLE__</p>
+    </div>
+    <nav class="tabs">__NAV__</nav>
+  </header>
+
+  <div class="metrics" id="metrics"></div>
+
+  <main class="graph-app" id="graph-app" hidden>
+    <aside class="rail" id="left-rail">
+      <h3>Filters</h3>
+      <div class="control">
+        <input id="search" placeholder="Search every entity by name, type, source…" autocomplete="off">
+        <div id="search-results" class="search-results" hidden></div>
+        <select id="predicate" aria-label="Filter by relationship"></select>
+        <select id="dataset" aria-label="Filter by dataset"></select>
+        <div class="control-row">
+          <button id="key-only" title="Show only curated key relationships">Key links</button>
+          <button id="reset" class="ghost" title="Clear filters and selection">Reset</button>
+        </div>
+        <div class="control-row">
+          <button id="zoom-in" aria-label="Zoom in">+</button>
+          <button id="zoom-out" aria-label="Zoom out">−</button>
+          <button id="fit" title="Fit graph to view">Fit</button>
+        </div>
+      </div>
+      <h3>Legend</h3>
+      <div id="legend"></div>
+      <h3>Export</h3>
+      <div class="control-row">
+        <button id="export-svg" title="Download the current graph view as SVG">SVG</button>
+        <button id="export-png" title="Download the current graph view as PNG">PNG</button>
+      </div>
+      <h3>Graphify artifacts</h3>
+      <div id="artifacts" class="card-sub"></div>
+      <h3>Full data</h3>
+      <p class="card-sub">
+        <button id="load-full" class="ghost" title="Pull the complete graph into the view (needs a served portal)">Load full graph</button>
+      </p>
+      <p class="card-sub"><a id="full-graph-link" href="graph.json">Download complete graph.json</a></p>
+    </aside>
+
+    <section class="stage">
+      <div id="graph"></div>
+      <p class="hint" id="hint"></p>
+    </section>
+
+    <aside class="rail details" id="details-rail">
+      <div class="details-head">
+        <h3 style="margin-top:0">Selection</h3>
+        <button id="hide-details" class="ghost" style="flex:0 0 auto">Hide</button>
+      </div>
+      <div id="selection" class="placeholder">Click a node or relationship to inspect its evidence, confidence, source path, and wiki page.</div>
+    </aside>
+  </main>
+
+  <section class="intel-app" id="intel-app" hidden></section>
+
+  <script type="application/json" id="portal-data">__BOOTSTRAP_JSON__</script>
+  <script>__JS__</script>
+</body>
+</html>

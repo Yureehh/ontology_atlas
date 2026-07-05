@@ -217,9 +217,10 @@ tempCodeRunnerFile.py
 .ruff_cache/
 
 # Local generated ontology projects and demo output
+# (anchored to repo root so the source package src/company_ontology_agent/portal/ stays tracked)
 .ontology-agent/
-portal/
-graphify-out/
+/portal/
+/graphify-out/
 data/normalized/
 data/processed/
 

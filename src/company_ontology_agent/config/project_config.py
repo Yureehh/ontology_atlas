@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -34,7 +35,6 @@ class GraphifyConfig(BaseModel):
     update: bool = True
     no_viz: bool = False
     export_neo4j_cypher: bool = True
-    push_to_neo4j: bool = False
     strict: bool = False
     timeout_seconds: int | None = None
     auto_name_communities: bool = True
@@ -134,8 +134,27 @@ def find_project_root(start: Path | None = None) -> Path:
     raise FileNotFoundError("project.yaml not found in current directory or parents")
 
 
+def load_env_file(project_root: Path) -> None:
+    """Load ``project_root/.env`` into os.environ (shell values take precedence).
+
+    The tool shells out to graphify, which reads credentials (e.g. OPENAI_API_KEY)
+    from its own environment. Without this, a key present only in ``.env`` is invisible
+    to the subprocess and extraction silently produces an empty graph.
+    """
+    env_path = project_root / ".env"
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def load_project_config(root: Path | None = None) -> ProjectConfig:
     project_root = root or find_project_root()
+    load_env_file(project_root)
     with (project_root / "project.yaml").open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     return ProjectConfig.model_validate(data)

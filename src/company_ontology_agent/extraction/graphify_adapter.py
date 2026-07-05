@@ -59,6 +59,11 @@ class GraphifyCommand:
         ]
         if self.model:
             args.extend(["--model", self.model])
+        if self.no_viz:
+            # Skip graphify's standalone vis-network graph.html — it runs a physics
+            # simulation over the whole graph and freezes low-memory machines. The
+            # portal provides the interactive graph (static layout, capped + search).
+            args.append("--no-viz")
         return args
 
 
@@ -136,19 +141,6 @@ class GraphifyExtractor:
             strict=config.graphify.strict,
             timeout_seconds=config.graphify.timeout_seconds,
             auto_name_communities=config.graphify.auto_name_communities,
-        )
-
-    def command(self, input_path: Path) -> GraphifyCommand:
-        return GraphifyCommand(
-            executable=resolve_graphify_executable(self.executable) or self.executable,
-            input_path=input_path,
-            output_path=self.output_path,
-            backend=self.backend,
-            mode=self.mode,
-            model=self.model,
-            update=self.update,
-            no_viz=self.no_viz,
-            export_neo4j_cypher=self.export_neo4j_cypher,
         )
 
     def extract(self, input_path: Path, project_slug: str) -> ExtractedGraph:
@@ -351,6 +343,23 @@ def resolve_graphify_executable(executable: str = "graphify") -> str | None:
     return None
 
 
+def _terminate_with_note(
+    process: subprocess.Popen[str], command: list[str], note: str
+) -> subprocess.CompletedProcess[str]:
+    """Terminate a graphify subprocess, drain its output, and return a 124 result + note."""
+    process.terminate()
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        stdout, stderr = process.communicate()
+    stderr = (stderr or "").rstrip()
+    if stderr:
+        stderr += "\n"
+    stderr += note
+    return subprocess.CompletedProcess(command, 124, stdout, stderr)
+
+
 def _run_with_heartbeat(
     command: list[str],
     *,
@@ -381,17 +390,11 @@ def _run_with_heartbeat(
                 progress,
                 f"Graphify exceeded timeout of {max_runtime_seconds}s; terminating process.",
             )
-            process.terminate()
-            try:
-                stdout, stderr = process.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-            stderr = (stderr or "").rstrip()
-            if stderr:
-                stderr += "\n"
-            stderr += f"Graphify process exceeded timeout of {max_runtime_seconds}s."
-            return subprocess.CompletedProcess(command, 124, stdout, stderr)
+            return _terminate_with_note(
+                process,
+                command,
+                f"Graphify process exceeded timeout of {max_runtime_seconds}s.",
+            )
         if completion_file is None or not completion_file.exists():
             continue
         stat = completion_file.stat()
@@ -407,17 +410,11 @@ def _run_with_heartbeat(
                 "Graphify graph.json is stable; terminating lingering process "
                 "and continuing from the artifact.",
             )
-            process.terminate()
-            try:
-                stdout, stderr = process.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-            stderr = (stderr or "").rstrip()
-            if stderr:
-                stderr += "\n"
-            stderr += "Graphify process was terminated after graph.json became stable."
-            return subprocess.CompletedProcess(command, 124, stdout, stderr)
+            return _terminate_with_note(
+                process,
+                command,
+                "Graphify process was terminated after graph.json became stable.",
+            )
 
     stdout, stderr = process.communicate()
     elapsed = int(time.monotonic() - started)

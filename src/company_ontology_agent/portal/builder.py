@@ -43,11 +43,12 @@ from company_ontology_agent.wiki.relationships import key_relationship_ids
 JsonDict = dict[str, object]
 
 _ASSETS = files("company_ontology_agent.portal") / "assets"
-_STALE_FILES = ["data-graph.html", "repo-ontology.html"]
+_STALE_FILES = ["repo-ontology.html"]
 
-# (filename, page id, graph layer). ``index.html`` is the default landing page.
+# (filename, page id, graph layer). ``index.html`` is generated separately as a redirect to
+# whichever layer actually has content, so a fresh portal always opens on a populated graph.
 _PAGES = [
-    ("index.html", "data", "data"),
+    ("data-graph.html", "data", "data"),
     ("repo.html", "repo", "repo"),
     ("intelligence.html", "intelligence", None),
     ("changes.html", "changes", None),
@@ -118,6 +119,16 @@ class PortalBuilder:
             path = output_path / filename
             path.write_text(html, encoding="utf-8")
             written.append(path)
+
+        # Land on whichever layer actually has content — repo for code/knowledge projects,
+        # data for structured-connector projects. The empty layer stays reachable via its tab.
+        repo_count = sum(1 for node in nodes if node["graph_kind"] == "repo")
+        data_count = sum(1 for node in nodes if node["graph_kind"] == "data")
+        landing = "repo.html" if repo_count >= data_count else "data-graph.html"
+        (output_path / "index.html").write_text(
+            _redirect_page(f"{title} · Ontology Portal", landing), encoding="utf-8"
+        )
+        written.append(output_path / "index.html")
 
         written.append(output_path / "graph.json")
         return written
@@ -232,8 +243,10 @@ class PortalBuilder:
 
     # --------------------------------------------------------------- helpers
     def _graphify_artifacts(self, graphify_out: Path) -> list[JsonDict]:
+        # NB: graphify's standalone graph.html is intentionally NOT linked here — it runs a
+        # physics simulation over the full graph and freezes low-memory machines. The portal's
+        # own Repo-graph tab is the interactive graph (static layout, capped + search).
         candidates = [
-            ("graph.html", "Interactive graph"),
             ("GRAPH_TREE.html", "Repository tree"),
             ("GRAPH_REPORT.md", "Full report"),
         ]
@@ -252,7 +265,7 @@ class PortalBuilder:
         return None
 
     def _nav(self, active: str) -> str:
-        tabs = [("data", "index.html", "Data graph"),
+        tabs = [("data", "data-graph.html", "Data graph"),
                 ("repo", "repo.html", "Repo graph"),
                 ("intelligence", "intelligence.html", "Intelligence"),
                 ("changes", "changes.html", "Changes")]
@@ -281,11 +294,24 @@ def _search_index(layer_nodes: list[JsonDict]) -> list[JsonDict]:
 
 
 _SUBTITLES = {
-    "data": "Structured connector facts — leagues, teams, matches, predictions and markets.",
+    "data": "Structured-data entities and their relationships extracted from connected sources.",
     "repo": "Evidence-first code & architecture ontology extracted from the repository.",
     "intelligence": "Graphify graph intelligence — hotspots, surprising links and community cohesion.",
     "changes": "What changed since the previous run — added, removed and modified graph elements.",
 }
+
+
+def _redirect_page(title: str, target: str) -> str:
+    """Tiny landing page that forwards to the populated graph layer."""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        f"<title>{_esc(title)}</title>"
+        f'<meta http-equiv="refresh" content="0; url={target}">'
+        f"<script>location.replace({json.dumps(target)})</script></head>"
+        '<body style="font-family:system-ui,sans-serif;background:#0b1220;color:#cbd5e1;padding:2rem">'
+        f'Opening the ontology portal… <a style="color:#7dd3fc" href="{target}">open the graph</a> '
+        "if it doesn’t load automatically.</body></html>"
+    )
 
 
 def _json_for_script(payload: JsonDict) -> str:

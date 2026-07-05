@@ -11,6 +11,7 @@ import pytest
 import company_ontology_agent.extraction.graphify_adapter as graphify_adapter
 from company_ontology_agent.config.templates import scaffold_project
 from company_ontology_agent.extraction.graphify_adapter import (
+    GraphifyCommand,
     GraphifyExtractor,
     _graphify_visible_input,
     apply_community_names,
@@ -35,8 +36,10 @@ class FakeProvider(LLMProvider):
 
 
 def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
-    extractor = GraphifyExtractor(
-        tmp_path / "graphify-out",
+    command = GraphifyCommand(
+        executable="graphify",
+        input_path=tmp_path / "data/raw",
+        output_path=tmp_path / "graphify-out",
         backend="openai",
         mode="deep",
         model="gpt-test",
@@ -45,7 +48,7 @@ def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
         export_neo4j_cypher=True,
     )
 
-    argv = extractor.command(tmp_path / "data/raw").argv()
+    argv = command.argv()
 
     assert Path(argv[0]).name == "graphify"
     assert argv[1:] == [
@@ -59,6 +62,7 @@ def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
         str((tmp_path / "graphify-out").parent),
         "--model",
         "gpt-test",
+        "--no-viz",
     ]
 
 

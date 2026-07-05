@@ -64,14 +64,30 @@ def _sample_graph() -> ExtractedGraph:
 def test_portal_emits_all_pages_and_full_graph(tmp_path: Path) -> None:
     files = PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
     names = {path.name for path in files}
-    assert {"index.html", "repo.html", "intelligence.html", "changes.html", "graph.json"} <= names
+    assert {
+        "index.html",
+        "data-graph.html",
+        "repo.html",
+        "intelligence.html",
+        "changes.html",
+        "graph.json",
+    } <= names
     assert (tmp_path / "portal" / "index.html").exists()
+
+
+def test_index_redirects_to_populated_layer(tmp_path: Path) -> None:
+    # The sample graph is data-heavy (400 data nodes vs 2 repo), so the landing page
+    # should forward to the data layer, not sit on an empty tab.
+    PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
+    index = (tmp_path / "portal" / "index.html").read_text(encoding="utf-8")
+    assert "data-graph.html" in index
+    assert 'id="portal-data"' not in index  # it's a redirect, not a full page
 
 
 def test_search_index_covers_every_layer_entity(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
-    index = (tmp_path / "portal" / "index.html").read_text(encoding="utf-8")
-    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', index, re.S).group(1))
+    data_page = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
+    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', data_page, re.S).group(1))
     # Search must reach all 400 data entities even though only a ranked subset is plotted.
     assert len(payload["search_index"]) == 400
     assert len(payload["nodes"]) < len(payload["search_index"])
@@ -104,14 +120,14 @@ def test_changes_page_reports_diff_against_baseline(tmp_path: Path) -> None:
 
 def test_inline_payload_is_bounded(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
-    index = (tmp_path / "portal" / "index.html").read_text(encoding="utf-8")
-    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', index, re.S).group(1))
+    data_page = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
+    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', data_page, re.S).group(1))
     # 400 prediction rows must be pruned to the per-type cap, not inlined wholesale.
     assert len(payload["nodes"]) <= ranking.DATA_LIMIT
     assert payload["stats"]["total_nodes"] == 400  # data layer only
     assert payload["page"] == "data" and payload["kind"] == "data"
     # The whole page stays small enough to open offline.
-    assert len(index.encode("utf-8")) < 1_000_000
+    assert len(data_page.encode("utf-8")) < 1_000_000
 
 
 def test_full_graph_json_keeps_everything(tmp_path: Path) -> None:

@@ -200,7 +200,8 @@ def test_portal_and_wiki_include_domain_dataset_filters(tmp_path: Path) -> None:
         display_name="Ontology Atlas Oracle Bets Ontology",
     )
 
-    html = (tmp_path / "portal" / "index.html").read_text(encoding="utf-8")
+    # Structured-data graph → index.html redirects to the data layer page.
+    html = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
     graph_json = json.loads((tmp_path / "portal" / "graph.json").read_text(encoding="utf-8"))
     wiki_index = (tmp_path / "wiki" / "index.html").read_text(encoding="utf-8")
     wiki_data_graph = (tmp_path / "wiki" / "data-graph.html").read_text(encoding="utf-8")

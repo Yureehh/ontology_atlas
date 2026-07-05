@@ -184,6 +184,12 @@ def _run_pipeline(
         if source.enabled and source.type == "folder":
             normalized.extend(ingest_folder(root / source.path, root))
     typer.echo(f"Normalized files: {len(normalized)}")
+    if not normalized and config.graphify.enabled:
+        typer.echo(
+            "Warning: no source files were normalized — Graphify will produce an empty graph. "
+            f"Populate {config.graphify.input_path} with source files "
+            "(for docs/notes use `--source-profile docs` at init)."
+        )
 
     typer.echo("[3/4] Running Graphify")
     graphify_graph = None
@@ -228,6 +234,12 @@ def _run_pipeline(
                 typer.echo("Graphify tree artifact complete.")
             else:
                 typer.echo("Warning: Graphify tree artifact failed.")
+        else:
+            typer.echo(
+                f"Warning: Graphify FAILED (exit={graphify_result.exit_code}); the graph will be "
+                f"empty. See {graphify_out / 'GRAPH_REPORT.md'} — the usual cause is a missing "
+                "OPENAI_API_KEY (set it in .env or the shell), then re-run."
+            )
     else:
         typer.echo("Graphify disabled.")
 
@@ -295,6 +307,11 @@ def _doctor_checks(config: ProjectConfig, *, strict: bool) -> dict[str, bool]:
     llm_credentials = (
         bool(settings.llm_api_key and settings.llm_model) or config.llm.provider == "local"
     )
+    # Graphify shells out with its own backend; when that backend is openai it needs the key
+    # in the environment. Surface a missing key here instead of failing mid-extraction.
+    graphify_credentials = (
+        config.graphify.backend != "openai" or not config.graphify.enabled
+    ) or bool(settings.llm_api_key)
     checks = {
         "project.yaml": (root / "project.yaml").exists(),
         ".env": (root / ".env").exists(),
@@ -307,6 +324,7 @@ def _doctor_checks(config: ProjectConfig, *, strict: bool) -> dict[str, bool]:
         "docker compose": shutil.which("docker") is not None,
         "neo4j credentials": neo4j_credentials,
         "llm credentials": llm_credentials,
+        "graphify credentials": graphify_credentials,
     }
     if strict and neo4j_credentials:
         checks["neo4j connectivity"] = _neo4j_connects(config)

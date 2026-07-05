@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from company_ontology_agent.ingestion.base import NormalizedRecord
@@ -9,6 +10,8 @@ from company_ontology_agent.ingestion.transcript import read_transcript_json
 from company_ontology_agent.utils.hashing import file_hash, stable_hash
 from company_ontology_agent.utils.ids import stable_id
 
+logger = logging.getLogger(__name__)
+
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".json"}
 
 
@@ -16,15 +19,20 @@ def normalize_file(path: Path, project_root: Path) -> NormalizedRecord | None:
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_EXTENSIONS:
         return None
-    if suffix in {".txt", ".md"}:
-        text = path.read_text(encoding="utf-8")
-        source_type = "markdown" if suffix == ".md" else "text"
-    elif suffix == ".pdf":
-        text = read_pdf(path)
-        source_type = "pdf"
-    else:
-        text = read_transcript_json(path)
-        source_type = "transcript_json"
+    try:
+        if suffix in {".txt", ".md"}:
+            text = path.read_text(encoding="utf-8")
+            source_type = "markdown" if suffix == ".md" else "text"
+        elif suffix == ".pdf":
+            text = read_pdf(path)
+            source_type = "pdf"
+        else:
+            text = read_transcript_json(path)
+            source_type = "transcript_json"
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        # Skip an unreadable/corrupt file rather than aborting the whole ingestion run.
+        logger.warning("Skipping unreadable source file %s: %s", path, exc)
+        return None
 
     relative = (
         path.resolve().relative_to(project_root.resolve())

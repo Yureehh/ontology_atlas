@@ -96,32 +96,40 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     )
 
     names = {path.name for path in files}
-    assert {"index.html", "repo.html", "intelligence.html", "graph.json"} <= names
-    # Legacy single-page artifacts must be gone.
-    assert not (tmp_path / "portal/data-graph.html").exists()
+    assert {
+        "index.html",
+        "data-graph.html",
+        "repo.html",
+        "intelligence.html",
+        "graph.json",
+    } <= names
+    # Legacy single-page artifact must be gone.
     assert not (tmp_path / "portal/repo-ontology.html").exists()
 
     index_html = (tmp_path / "portal/index.html").read_text(encoding="utf-8")
+    data_graph_html = (tmp_path / "portal/data-graph.html").read_text(encoding="utf-8")
     repo_html = (tmp_path / "portal/repo.html").read_text(encoding="utf-8")
     intel_html = (tmp_path / "portal/intelligence.html").read_text(encoding="utf-8")
     data = json.loads((tmp_path / "portal/graph.json").read_text(encoding="utf-8"))
 
-    # Shared shell, three tabs, no inline 32MB rawData blob.
-    assert "Oracle Bets" in index_html  # public_project_name strips "Ontology Atlas"
+    # index.html is a lightweight redirect to the populated layer (repo here: 3 repo vs 2 data).
     assert "Ontology Portal" in index_html
-    assert 'href="repo.html"' in index_html and 'href="intelligence.html"' in index_html
+    assert "url=repo.html" in index_html
     assert "const rawData" not in index_html
 
     def bootstrap(html: str) -> dict:
         return json.loads(re.search(r'id="portal-data">(.*?)</script>', html, re.S).group(1))
 
-    index_data = bootstrap(index_html)
+    data_graph_data = bootstrap(data_graph_html)
     repo_data = bootstrap(repo_html)
     intel_data = bootstrap(intel_html)
-    assert index_data["page"] == "data" and index_data["kind"] == "data"
+    assert data_graph_data["page"] == "data" and data_graph_data["kind"] == "data"
     assert repo_data["page"] == "repo" and repo_data["kind"] == "repo"
     assert intel_data["page"] == "intelligence"
-    assert {node["name"] for node in index_data["nodes"]} == {"Blue Team", "Match 1"}
+    # Shared shell + tabs render on the real pages.
+    assert "Oracle Bets" in repo_html  # public_project_name strips "Ontology Atlas"
+    assert 'href="data-graph.html"' in repo_html and 'href="intelligence.html"' in repo_html
+    assert {node["name"] for node in data_graph_data["nodes"]} == {"Blue Team", "Match 1"}
     assert {node["name"] for node in repo_data["nodes"]} == {"Backend", "FastAPI", "predict.py"}
 
     # The full graph.json keeps everything, flat, with rich link metadata.
@@ -134,13 +142,14 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     visual_types = {node["name"]: node["visual_type"] for node in data["nodes"]}
     assert visual_types["predict.py"] == "File" and visual_types["Blue Team"] == "Team"
 
-    # Graphify artifacts stay linked from the portal (the user values them).
-    assert {a["url"] for a in index_data["artifacts"]} == {
-        "../graphify-out/graph.html",
+    # Graphify artifacts stay linked from the portal — but NOT the heavy standalone
+    # graph.html (physics simulation freezes browsers); the portal's Repo graph is the
+    # interactive view.
+    assert {a["url"] for a in repo_data["artifacts"]} == {
         "../graphify-out/GRAPH_TREE.html",
         "../graphify-out/GRAPH_REPORT.md",
     }
-    assert "graphify-out/graph.html" in intel_html
+    assert "graphify-out/graph.html" not in repo_html
 
 
 def test_key_relationship_ranking_promotes_api_data_and_model_edges() -> None:

@@ -11,14 +11,14 @@ from company_ontology_agent.portal.ranking import page_worthy_entity_ids
 from company_ontology_agent.utils.display import public_project_name
 from company_ontology_agent.utils.ids import slugify
 from company_ontology_agent.wiki.relationships import key_relationship_sections
-from company_ontology_agent.wiki.templates import entity_filename, entity_page, source_filename
+from company_ontology_agent.wiki.templates import (
+    TYPE_DIRS,
+    entity_filename,
+    entity_page,
+    entity_wiki_ref,
+    source_filename,
+)
 
-TYPE_DIRS = {
-    EntityType.decision: "decisions",
-    EntityType.requirement: "requirements",
-    EntityType.issue: "issues",
-    EntityType.task: "tasks",
-}
 TYPE_HEADINGS = {
     EntityType.decision: "Decisions",
     EntityType.requirement: "Requirements",
@@ -336,7 +336,7 @@ class WikiExporter:
             lines.append(f"- [[modules/{slugify(module.name)}|{module.name}]]")
         lines.extend(["", "## Technology Stack", ""])
         for technology in sorted(technologies, key=lambda item: item.name):
-            lines.append(f"- [[entities/{slugify(technology.name)}|{technology.name}]]")
+            lines.append(f"- [[{entity_wiki_ref(technology)}|{technology.name}]]")
         lines.extend(
             [
                 "",
@@ -371,7 +371,7 @@ class WikiExporter:
         if not items:
             lines.append("No dedicated nodes were detected for this section.")
         for item in sorted(items, key=lambda entity: entity.name):
-            lines.append(f"- [[entities/{slugify(item.name)}|{item.name}]]")
+            lines.append(f"- [[{entity_wiki_ref(item)}|{item.name}]]")
         return "\n".join(lines) + "\n"
 
     def _graph_rag_page(self, graph: ExtractedGraph, display_name: str) -> str:
@@ -445,7 +445,7 @@ class WikiExporter:
             outgoing, key=lambda item: (item[0].predicate, item[1].name)
         ):
             lines.append(
-                f"- `{assertion.predicate}` [[../entities/{slugify(target.name)}|{target.name}]]"
+                f"- `{assertion.predicate}` [[{entity_wiki_ref(target)}|{target.name}]]"
             )
         lines.extend(["", "## Incoming", ""])
         if not incoming:
@@ -454,7 +454,7 @@ class WikiExporter:
             incoming, key=lambda item: (item[0].predicate, item[1].name)
         ):
             lines.append(
-                f"- [[../entities/{slugify(source.name)}|{source.name}]] `{assertion.predicate}`"
+                f"- [[{entity_wiki_ref(source)}|{source.name}]] `{assertion.predicate}`"
             )
         return "\n".join(lines) + "\n"
 
@@ -513,7 +513,7 @@ class WikiExporter:
         for entity in sorted(entities, key=lambda item: item.name)[:200]:
             mapped_type = entity.metadata.get("mapped_type", entity.type.value)
             lines.append(
-                f"- [[../entities/{slugify(entity.name)}|{entity.name}]] "
+                f"- [[{entity_wiki_ref(entity)}|{entity.name}]] "
                 f"(`{mapped_type}`)"
             )
         return "\n".join(lines) + "\n"
@@ -537,7 +537,7 @@ class WikiExporter:
         for entity in sorted(entities, key=lambda item: item.name)[:200]:
             mapped_type = entity.metadata.get("mapped_type", entity.type.value)
             lines.append(
-                f"- [[../entities/{slugify(entity.name)}|{entity.name}]] "
+                f"- [[{entity_wiki_ref(entity)}|{entity.name}]] "
                 f"(`{mapped_type}`)"
             )
         return "\n".join(lines) + "\n"

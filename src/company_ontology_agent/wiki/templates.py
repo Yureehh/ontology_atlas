@@ -1,8 +1,28 @@
 from __future__ import annotations
 
-from company_ontology_agent.graph.models import Assertion, Entity
+from company_ontology_agent.graph.models import Assertion, Entity, EntityType
 from company_ontology_agent.utils.ids import slugify
 from company_ontology_agent.wiki.frontmatter import render_frontmatter
+
+# Wiki subdirectory each entity type is written into (default: "entities").
+# Single source of truth — imported by the exporter so page paths and link
+# targets can never drift apart.
+TYPE_DIRS = {
+    EntityType.decision: "decisions",
+    EntityType.requirement: "requirements",
+    EntityType.issue: "issues",
+    EntityType.task: "tasks",
+}
+
+
+def entity_wiki_ref(entity: Entity) -> str:
+    """Wiki-root-relative link target for an entity (e.g. ``entities/foo``).
+
+    `_wiki_link_markdown` prepends the page's relative root, so targets must be
+    root-relative — never prefixed with ``../`` or ``./``.
+    """
+    directory = TYPE_DIRS.get(entity.type, "entities")
+    return f"{directory}/{slugify(entity.name)}"
 
 
 def entity_page(
@@ -58,7 +78,7 @@ def _relationship_lines(items: list[tuple[Assertion, Entity]], direction: str) -
         return "- None"
     lines = []
     for assertion, entity in sorted(items, key=lambda item: (item[0].predicate, item[1].name)):
-        target = f"[[{entity_filename(entity).removesuffix('.md')}|{entity.name}]]"
+        target = f"[[{entity_wiki_ref(entity)}|{entity.name}]]"
         if direction == "outgoing":
             lines.append(
                 f"- `{assertion.predicate}` -> {target} "

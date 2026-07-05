@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from company_ontology_agent.cli.main import _strict_required_checks_pass, app
@@ -12,6 +15,25 @@ from company_ontology_agent.graph.cypher import CONSTRAINTS
 from company_ontology_agent.ingestion.normalizer import read_normalized_jsonl
 from company_ontology_agent.ontology.mappings import normalize_predicate
 from company_ontology_agent.utils.ids import stable_id
+
+
+def _graphify_runnable() -> bool:
+    """True only if the external graphify tool is present AND actually executes.
+
+    Guards the full-pipeline integration test so ``make test`` stays green where
+    graphify isn't installed (or a console-script has a stale shebang).
+    """
+    exe = shutil.which("graphify")
+    if not exe:
+        return False
+    try:
+        subprocess.run([exe, "--help"], capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
+_GRAPHIFY_RUNNABLE = _graphify_runnable()
 
 
 def test_stable_id_is_replayable() -> None:
@@ -37,6 +59,9 @@ def test_repo_infrastructure_docs_are_showcase_ready() -> None:
     assert "uv run --extra dev mypy src/company_ontology_agent" in ci
 
 
+@pytest.mark.skipif(
+    not _GRAPHIFY_RUNNABLE, reason="graphify tool not installed/runnable in this environment"
+)
 def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)

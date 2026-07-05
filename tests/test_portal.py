@@ -130,6 +130,14 @@ def test_inline_payload_is_bounded(tmp_path: Path) -> None:
     assert len(data_page.encode("utf-8")) < 1_000_000
 
 
+def test_prune_layer_caps_links() -> None:
+    # A star of 5 edges capped to 2 — guards the SVG-melting edge explosion.
+    nodes = [{"id": f"n{i}", "name": f"n{i}", "type": "File"} for i in range(6)]
+    links = [{"source": "n0", "target": f"n{i}", "predicate": "calls"} for i in range(1, 6)]
+    _, kept = ranking.prune_layer(nodes, links, limit=10, link_limit=2)
+    assert len(kept) == 2
+
+
 def test_full_graph_json_keeps_everything(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
     full = json.loads((tmp_path / "portal" / "graph.json").read_text(encoding="utf-8"))

@@ -220,7 +220,12 @@ class PortalBuilder:
         limit = ranking.DATA_LIMIT if layer == "data" else ranking.REPO_LIMIT
         per_type_cap = ranking.DATA_PER_TYPE_CAP if layer == "data" else None
         shown_nodes, shown_links = ranking.prune_layer(
-            layer_nodes, layer_links, limit=limit, per_type_cap=per_type_cap, pinned_ids=pinned
+            layer_nodes,
+            layer_links,
+            limit=limit,
+            per_type_cap=per_type_cap,
+            pinned_ids=pinned,
+            link_limit=ranking.LINK_LIMIT,
         )
         stats.update(
             {

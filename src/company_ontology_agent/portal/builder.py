@@ -248,10 +248,11 @@ class PortalBuilder:
 
     # --------------------------------------------------------------- helpers
     def _graphify_artifacts(self, graphify_out: Path) -> list[JsonDict]:
-        # NB: graphify's standalone graph.html is intentionally NOT linked here — it runs a
-        # physics simulation over the full graph and freezes low-memory machines. The portal's
-        # own Repo-graph tab is the interactive graph (static layout, capped + search).
+        # graph.html is graphify's full physics render — the "cool" one, but heavy on
+        # low-memory machines. It's only emitted when no_viz is false, so it's linked
+        # only when present; the portal's own Repo-graph tab stays the light everyday view.
         candidates = [
+            ("graph.html", "Interactive graph"),
             ("GRAPH_TREE.html", "Repository tree"),
             ("GRAPH_REPORT.md", "Full report"),
         ]

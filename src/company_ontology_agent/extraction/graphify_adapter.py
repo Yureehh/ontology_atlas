@@ -41,9 +41,7 @@ class GraphifyCommand:
     backend: str
     mode: str
     model: str | None
-    update: bool
     no_viz: bool
-    export_neo4j_cypher: bool
 
     def argv(self) -> list[str]:
         args = [
@@ -107,9 +105,7 @@ class GraphifyExtractor:
         backend: str = "openai",
         mode: str = "deep",
         model: str | None = None,
-        update: bool = True,
         no_viz: bool = True,
-        export_neo4j_cypher: bool = True,
         strict: bool = False,
         timeout_seconds: int | None = None,
         auto_name_communities: bool = True,
@@ -119,9 +115,7 @@ class GraphifyExtractor:
         self.backend = backend
         self.mode = mode
         self.model = model
-        self.update = update
         self.no_viz = no_viz
-        self.export_neo4j_cypher = export_neo4j_cypher
         self.strict = strict
         self.timeout_seconds = timeout_seconds
         self.auto_name_communities = auto_name_communities
@@ -135,9 +129,7 @@ class GraphifyExtractor:
             backend=config.graphify.backend,
             mode=config.graphify.mode,
             model=settings.llm_model if config.graphify.backend == "openai" else None,
-            update=config.graphify.update,
             no_viz=config.graphify.no_viz,
-            export_neo4j_cypher=config.graphify.export_neo4j_cypher,
             strict=config.graphify.strict,
             timeout_seconds=config.graphify.timeout_seconds,
             auto_name_communities=config.graphify.auto_name_communities,
@@ -267,9 +259,7 @@ class GraphifyExtractor:
                 backend=self.backend,
                 mode=self.mode,
                 model=self.model,
-                update=self.update,
                 no_viz=self.no_viz,
-                export_neo4j_cypher=self.export_neo4j_cypher,
             )
             _report(
                 progress,

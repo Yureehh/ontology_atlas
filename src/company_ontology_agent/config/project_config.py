@@ -34,7 +34,6 @@ class GraphifyConfig(BaseModel):
     mode: Literal["default", "deep"] = "deep"
     update: bool = True
     no_viz: bool = False
-    export_neo4j_cypher: bool = True
     strict: bool = False
     timeout_seconds: int | None = None
     auto_name_communities: bool = True
@@ -93,11 +92,6 @@ class DatasetConfig(BaseModel):
     enabled: bool = True
 
 
-class PrivacyConfig(BaseModel):
-    pii_mode: str = "basic_redaction"
-    classification_default: str = "internal"
-
-
 class SyncConfig(BaseModel):
     incremental: bool = True
     idempotency: bool = True
@@ -117,7 +111,6 @@ class ProjectConfig(BaseModel):
     wiki: WikiConfig = Field(default_factory=WikiConfig)
     sources: list[SourceConfig] = Field(default_factory=lambda: [SourceConfig(name="local_docs")])
     datasets: list[DatasetConfig] = Field(default_factory=list)
-    privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     sync: SyncConfig = Field(default_factory=SyncConfig)
 
 

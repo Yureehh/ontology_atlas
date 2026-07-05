@@ -43,9 +43,7 @@ def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
         backend="openai",
         mode="deep",
         model="gpt-test",
-        update=True,
         no_viz=True,
-        export_neo4j_cypher=True,
     )
 
     argv = command.argv()

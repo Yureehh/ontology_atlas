@@ -141,10 +141,10 @@ ontology-agent portal build --neo4j
 ontology-agent portal serve --port 8765
 ```
 
-Builds or serves the static local demo portal under `portal/`. The build emits three
-sibling pages that share one renderer — `index.html` (the default data graph),
-`repo.html` (the code/architecture graph), and `intelligence.html` (the Graphify
-hotspots / surprising-links / cohesion dashboard) — plus the complete `graph.json`.
+Builds or serves the static local demo portal under `portal/`. The build emits sibling
+pages that share one renderer — `index.html` (a redirect to the populated layer),
+`data-graph.html` (the connector data graph), `repo.html` (the code/architecture graph),
+`intelligence.html` (the Graphify dashboard), and `changes.html` — plus the complete `graph.json`.
 
 ## `ontology-agent doctor`
 

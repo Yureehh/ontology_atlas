@@ -88,8 +88,6 @@ graphify:
   mode: deep
   update: true
   no_viz: false
-  export_neo4j_cypher: true
-  push_to_neo4j: false
   timeout_seconds: null
   auto_name_communities: true
 ```

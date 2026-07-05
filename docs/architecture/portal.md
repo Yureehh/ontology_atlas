@@ -7,13 +7,14 @@ JS, and data (no external requests).
 
 ## Pages — one renderer, swapped data
 
-`build()` emits four sibling pages that share the **same** renderer (`portal/assets/portal.js`)
+`build()` emits sibling pages that share the **same** renderer (`portal/assets/portal.js`)
 and differ only by the JSON injected into a `<script type="application/json" id="portal-data">`
 block, plus the full `graph.json`:
 
 | File | Page | What it shows |
 |------|------|---------------|
-| `index.html` | `data` | the structured connector graph (default landing page) |
+| `index.html` | — | redirect to whichever layer has content (repo or data) |
+| `data-graph.html` | `data` | the structured connector graph |
 | `repo.html` | `repo` | the code/architecture ontology graph |
 | `intelligence.html` | `intelligence` | Graphify intelligence dashboard (see [Graph Intelligence](graph-intelligence.md)) |
 | `changes.html` | `changes` | run-to-run diff (see [Progressive Updates](../getting-started/progressive-updates.md)) |

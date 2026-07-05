@@ -65,8 +65,8 @@ portal/graph.json
 ```
 
 `make view` serves the local portal. It is the easiest way to inspect the graph when
-you do not want Neo4j. The portal has four tabs — data graph (`index.html`), repo graph,
-the Graphify intelligence dashboard, and a Changes diff against the previous run.
+you do not want Neo4j. `index.html` redirects to the populated layer; the tabs are repo graph,
+data graph, the Graphify intelligence dashboard, and a Changes diff against the previous run.
 
 ## Oracle Bets Clean Manager Demo
 

@@ -40,7 +40,6 @@ when preparing the manager-facing portal and Neo4j exploration pack.
 
 ## Documentation Map
 
-- [Current Status](getting-started/current-status.md): what exists and what is still a v1 limitation.
 - [Quickstart](getting-started/quickstart.md): install, scaffold, ingest, build, and export.
 - [Environment](getting-started/environment.md): `.env` and required runtime variables.
 - [Graphify](getting-started/graphify.md): Graphify install, command mode, and output handling.
@@ -48,11 +47,10 @@ when preparing the manager-facing portal and Neo4j exploration pack.
 - [Neo4j Desktop](getting-started/neo4j-desktop.md): how to run a real local graph backend.
 - [Portal And Wiki](getting-started/portal-and-wiki.md): the generated portal pages and wiki.
 - [Progressive Updates](getting-started/progressive-updates.md): incremental re-runs and the Changes diff.
-- [SlideSmith POC](getting-started/slidesmith-poc.md): exact demo validation runbook.
 - [Architecture Overview](architecture/overview.md): boundaries and component ownership.
 - [Data Model](architecture/data-model.md): assertion-centric graph model.
 - [Pipeline](architecture/pipeline.md): source-to-wiki flow.
-- [Portal](architecture/portal.md): the four-page portal, ranking, search, and exports.
+- [Portal](architecture/portal.md): the portal pages, ranking, search, and exports.
 - [Graph Intelligence](architecture/graph-intelligence.md): hotspots, refactor candidates, questions, quality.
 - [GraphRAG Readiness](architecture/graph-rag.md): retrieval shape and how to enable semantic search.
 - [CLI Reference](reference/cli.md): command contract.
@@ -62,4 +60,3 @@ when preparing the manager-facing portal and Neo4j exploration pack.
 - [Caveats](reference/caveats.md): known limitations and trade-offs.
 - [Runbooks](operations/runbooks.md): exact Graphify-only, portal, Neo4j, and structured data tests.
 - [Quality Gates](development/quality-gates.md): UV, Ruff, mypy, pytest, MkDocs.
-- [Scheduled Releases](development/scheduled-releases.md): V1, V2, and V3 requirements.

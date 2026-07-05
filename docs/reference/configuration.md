@@ -53,8 +53,6 @@ graphify:
   mode: deep
   update: true
   no_viz: true
-  export_neo4j_cypher: true
-  push_to_neo4j: false
   strict: false
 ```
 

@@ -22,7 +22,6 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started:
-      - Current Status: getting-started/current-status.md
       - Install: getting-started/install.md
       - Quickstart: getting-started/quickstart.md
       - Environment: getting-started/environment.md
@@ -31,7 +30,6 @@ nav:
       - Neo4j Desktop: getting-started/neo4j-desktop.md
       - Portal And Wiki: getting-started/portal-and-wiki.md
       - Progressive Updates: getting-started/progressive-updates.md
-      - SlideSmith POC: getting-started/slidesmith-poc.md
   - Architecture:
       - Overview: architecture/overview.md
       - Data Model: architecture/data-model.md
@@ -51,5 +49,3 @@ nav:
       - CI/CD: operations/ci-cd.md
   - Development:
       - Quality Gates: development/quality-gates.md
-      - Scheduled Releases: development/scheduled-releases.md
-      - Roadmap: development/roadmap.md

@@ -51,3 +51,20 @@ To enable semantic retrieval later you would: (1) compute embeddings for wiki ch
 with the configured provider, (2) populate a vector index (Neo4j `chunk_embeddings` or a local
 store), and (3) extend `graph_retriever`/`wiki_retriever` to query it. Kept out of the default
 build to stay lightweight, dependency-light, and zero-cost. See [Caveats](../reference/caveats.md).
+
+## Which substrate — and how to plug into Neo4j
+
+Two layers, two jobs: **retrieve** entry entities from the text, then **traverse** the graph for
+multi-hop context. Use both.
+
+- **Retrieve** over `wiki/entities/*.md` (embed the chunks) — this is the text layer with provenance.
+- **Traverse** in **Neo4j** — run `ontology-agent run --neo4j` to upsert the validated graph, then
+  point an agent at it. Recommended path: Neo4j's native vector index for the wiki chunk embeddings +
+  Cypher for neighborhood traversal, wired with the official `neo4j-graphrag` package or LangChain's
+  `Neo4jVector` / `GraphCypherQAChain`. Neo4j is the production substrate — don't stand up a second graph store.
+
+**Can other artifacts be the graph instead?**
+
+- `portal/graph.json` — **yes, as a zero-infra fallback.** Same nodes/edges as Neo4j; load it into an
+  in-memory graph (e.g. `networkx`) and traverse. Fine for small graphs or a local script; no vector index.
+- `graphify-out/graph.html` — **no.** It is a rendered visualization (HTML), not queryable data. Never a RAG source.

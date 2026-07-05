@@ -38,37 +38,23 @@ http://localhost:8765/portal/index.html
 
 ## Portal Contents
 
-The portal is three sibling pages that share a single renderer and differ only by the
-graph data injected into each:
+The portal is generated pages that share one renderer, differing only by the graph data
+injected into each:
 
-- `portal/index.html`: the default landing page — the structured connector data graph,
-- `portal/repo.html`: the normalized repo/code ontology graph,
-- `portal/intelligence.html`: a Graphify dashboard of architecture hotspots, surprising
-  connections, and community cohesion,
+- `portal/index.html`: a lightweight redirect that opens whichever layer has content —
+  the repo graph for code/knowledge projects, the data graph for structured-connector ones,
+- `portal/repo.html`: the repo/code ontology graph,
+- `portal/data-graph.html`: the structured-connector data graph,
+- `portal/intelligence.html`: a Graphify dashboard (hotspots, surprising links, community cohesion),
+- `portal/changes.html`: what changed since the previous run,
 - `portal/graph.json`: the complete graph for download (each page inlines only a bounded,
   ranked subset so the HTML stays small and opens offline),
-- links to `wiki/index.md`, `wiki/architecture.md`, `wiki/data-graph.md`, and
-  `wiki/graph-rag.md`,
-- links to Graphify `graph.html`, `GRAPH_TREE.html`, and `GRAPH_REPORT.md` when present.
+- sidebar links to `GRAPH_TREE.html` and `GRAPH_REPORT.md` (Graphify's own artifacts).
 
-The portal graph is not the same artifact as Graphify's native `graph.html` or
-`GRAPH_TREE.html`. Graphify's files are the primary visual for repository/code
-exploration. The portal is the product/demo surface around those artifacts and the
-primary visual for structured connector data.
-
-The generated visual roles are:
-
-- `graphify-out/graph.html`: canonical repo/code visual graph.
-- `graphify-out/GRAPH_TREE.html`: canonical repo/code hierarchy.
-- `portal/index.html`: structured connector graph view (default).
-- `portal/repo.html`: normalized ontology view used by Neo4j, wiki, and retrieval.
-
-The main portal entrypoint is `portal/index.html`, and it opens directly on the
-structured-data graph. `repo.html` and `intelligence.html` load the same renderer with
-different data, so the views cannot drift into different layouts. Use the data graph when
-you want a Graphify-like graph surface for connector data that Graphify itself does not
-read. The normalized repo ontology view is secondary and should not be presented as
-better than Graphify's native repo graph.
+The portal deliberately does **not** embed or link Graphify's standalone `graph.html`: that
+file runs a physics simulation that freezes on large graphs. It remains a separate Graphify
+artifact — a pretty standalone view for small graphs, opened on its own. The portal's graph uses
+a static layout (no physics), a ranked node cap, and full-corpus search, so it scales.
 
 This prevents large business datasets from hiding the repository architecture. The
 portal keeps the complete graph in `portal/graph.json`, but each layer initially shows

@@ -146,7 +146,47 @@
       return { nodes: nodes.map((n) => ({ ...n })), links };
     }
 
-    // ---------- deterministic clustered layout (no physics) ----------
+    // ---------- clustered layout + one-shot force spread ----------
+    // ponytail: bounded-iteration force relaxation, NOT a live sim, so it spreads
+    // overlapping nodes once and then stays static — no continuous CPU (that was the
+    // old freeze). Naive O(n²) repulsion is fine at the capped node count (~600 max);
+    // swap in Barnes–Hut only if that cap ever grows past a couple thousand.
+    function forceSpread(nodes, links, byId, width, height) {
+      const REPULSION = 780, SPRING = 0.03, SPRING_LEN = 34, GRAVITY = 0.02;
+      const ITERS = 170, MAX_STEP = 26;
+      const pairs = links
+        .map((l) => [byId.get(l.source), byId.get(l.target)])
+        .filter((p) => p[0] && p[1] && p[0] !== p[1]);
+      const cx = width / 2, cy = height / 2;
+      for (let it = 0; it < ITERS; it++) {
+        const cool = 1 - it / ITERS;
+        for (const a of nodes) { a._fx = (cx - a.x) * GRAVITY; a._fy = (cy - a.y) * GRAVITY; }
+        for (let i = 0; i < nodes.length; i++) {
+          const a = nodes[i];
+          for (let j = i + 1; j < nodes.length; j++) {
+            const b = nodes[j];
+            let dx = a.x - b.x, dy = a.y - b.y;
+            let d2 = dx * dx + dy * dy;
+            if (d2 < 0.01) { dx = (i - j) * 0.1 + 0.1; dy = 0.1; d2 = dx * dx + dy * dy; }
+            const d = Math.sqrt(d2), f = REPULSION / d2, ux = dx / d, uy = dy / d;
+            a._fx += ux * f; a._fy += uy * f;
+            b._fx -= ux * f; b._fy -= uy * f;
+          }
+        }
+        for (const [a, b] of pairs) {
+          let dx = b.x - a.x, dy = b.y - a.y;
+          const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+          const f = SPRING * (d - SPRING_LEN), ux = dx / d, uy = dy / d;
+          a._fx += ux * f; a._fy += uy * f;
+          b._fx -= ux * f; b._fy -= uy * f;
+        }
+        for (const a of nodes) {
+          a.x += Math.max(-MAX_STEP, Math.min(MAX_STEP, a._fx)) * cool;
+          a.y += Math.max(-MAX_STEP, Math.min(MAX_STEP, a._fy)) * cool;
+        }
+      }
+    }
+
     let view = { nodes: [], links: [], centers: new Map() };
     function layout() {
       const width = container.clientWidth || 800;
@@ -194,6 +234,9 @@
         });
       });
 
+      // Relax the phyllotaxis seed so clumped nodes push apart and become readable.
+      forceSpread(f.nodes, links, local, width, height);
+
       // Normalise everything into the viewport with padding so nothing clips at the edges
       // and cluster labels stay readable above their group.
       const xs = f.nodes.map((n) => n.x);
@@ -207,12 +250,13 @@
       const offY = padTop - minY * scale;
       const place = (p) => { p.x = p.x * scale + offX; p.y = p.y * scale + offY; };
       f.nodes.forEach(place);
-      centers.forEach(place);
-      // Anchor each cluster label just above its topmost node.
+      // The force pass moved nodes, so re-anchor each cluster label to the centroid of
+      // its (spread) members and sit it just above the topmost one.
       keys.forEach((key) => {
+        const members = groups.get(key);
         const center = centers.get(key);
-        const top = Math.min(...groups.get(key).map((n) => n.y));
-        center.labelY = Math.max(14, top - 12);
+        center.x = members.reduce((s, n) => s + n.x, 0) / members.length;
+        center.labelY = Math.max(14, Math.min(...members.map((n) => n.y)) - 12);
       });
 
       view = { nodes: f.nodes, links, centers, localById: local };
@@ -244,12 +288,14 @@
         return;
       }
 
+      const invKc = 1 / transform.k;
       centers.forEach((center, key) => {
         const label = document.createElementNS(SVGNS, "text");
         label.setAttribute("class", "cluster-label");
         label.setAttribute("x", center.x);
         label.setAttribute("y", center.labelY != null ? center.labelY : center.y);
         label.setAttribute("text-anchor", "middle");
+        label.style.fontSize = (11 * invKc).toFixed(2) + "px";
         label.textContent = key.length > 28 ? key.slice(0, 27) + "…" : key;
         labelLayer.appendChild(label);
       });
@@ -288,9 +334,14 @@
           if (l.target === selectedId) neighborOf.add(l.source);
         });
       }
+      // Show more names as you zoom in, but never the whole graph at once (that was a
+      // wall of overlapping text). invK keeps every label a constant on-screen size
+      // regardless of the zoom transform, so they stay readable instead of ballooning.
+      const invK = 1 / transform.k;
+      const cap = transform.k < 1.2 ? 16 : transform.k < 2 ? 44 : transform.k < 3 ? 90 : 150;
       const labelled = new Set(
         [...nodes].sort((a, b) => b.degree - a.degree)
-          .slice(0, transform.k < 1.2 ? 14 : transform.k < 2 ? 32 : nodes.length)
+          .slice(0, cap)
           .map((n) => n.id));
       if (selectedId) labelled.add(selectedId);
 
@@ -316,7 +367,8 @@
         if (labelled.has(node.id)) {
           const text = document.createElementNS(SVGNS, "text");
           text.setAttribute("x", node.x);
-          text.setAttribute("y", node.y + r + 8);
+          text.setAttribute("y", node.y + r + 9 * invK);
+          text.style.fontSize = (9.5 * invK).toFixed(2) + "px";
           text.textContent = node.name.length > 22 ? node.name.slice(0, 21) + "…" : node.name;
           group.appendChild(text);
         }
@@ -425,13 +477,19 @@
 
     // ---------- zoom / pan ----------
     function clampScale(k) { return Math.max(0.3, Math.min(3.5, k)); }
+    // Label density steps with zoom (see render): recompute labels only when a
+    // threshold is crossed, not on every wheel tick, so zooming stays cheap.
+    function labelBucket(k) { return k < 1.2 ? 0 : k < 2 ? 1 : k < 3 ? 2 : 3; }
+    let lastBucket = 0;
     function zoomAround(px, py, factor) {
       const bx = (px - transform.x) / transform.k;
       const by = (py - transform.y) / transform.k;
       transform.k = clampScale(transform.k * factor);
       transform.x = px - bx * transform.k;
       transform.y = py - by * transform.k;
-      applyTransform();
+      const bucket = labelBucket(transform.k);
+      if (bucket !== lastBucket) { lastBucket = bucket; render(); }
+      else applyTransform();
     }
     function fit() { transform = { x: 0, y: 0, k: 1 }; render(); }
 

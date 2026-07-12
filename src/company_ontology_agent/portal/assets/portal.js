@@ -151,16 +151,21 @@
     // overlapping nodes once and then stays static — no continuous CPU (that was the
     // old freeze). Naive O(n²) repulsion is fine at the capped node count (~600 max);
     // swap in Barnes–Hut only if that cap ever grows past a couple thousand.
-    function forceSpread(nodes, links, byId, width, height) {
+    function forceSpread(nodes, links, byId, width, height, centerOf) {
       const REPULSION = 780, SPRING = 0.03, SPRING_LEN = 34, GRAVITY = 0.02;
       const ITERS = 170, MAX_STEP = 26;
       const pairs = links
         .map((l) => [byId.get(l.source), byId.get(l.target)])
         .filter((p) => p[0] && p[1] && p[0] !== p[1]);
-      const cx = width / 2, cy = height / 2;
+      const fallback = { x: width / 2, y: height / 2 };
       for (let it = 0; it < ITERS; it++) {
         const cool = 1 - it / ITERS;
-        for (const a of nodes) { a._fx = (cx - a.x) * GRAVITY; a._fy = (cy - a.y) * GRAVITY; }
+        for (const a of nodes) {
+          // Gravity anchors each node to its OWN cluster center — global gravity
+          // squashed every community into one central blob.
+          const c = (centerOf && centerOf(a)) || fallback;
+          a._fx = (c.x - a.x) * GRAVITY; a._fy = (c.y - a.y) * GRAVITY;
+        }
         for (let i = 0; i < nodes.length; i++) {
           const a = nodes[i];
           for (let j = i + 1; j < nodes.length; j++) {
@@ -235,7 +240,7 @@
       });
 
       // Relax the phyllotaxis seed so clumped nodes push apart and become readable.
-      forceSpread(f.nodes, links, local, width, height);
+      forceSpread(f.nodes, links, local, width, height, (n) => centers.get(groupKey(n)));
 
       // Normalise everything into the viewport with padding so nothing clips at the edges
       // and cluster labels stay readable above their group.

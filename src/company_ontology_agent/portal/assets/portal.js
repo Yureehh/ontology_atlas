@@ -302,10 +302,15 @@
       }
 
       const invKc = 1 / transform.k;
+      // Data-like layers (few clusters) always show every category label. Repo-like
+      // layers (dozens of communities) label only the biggest ones at fit zoom —
+      // 30 stacked labels were worse than none; the rest appear as you zoom in.
+      const majorCenters = new Set(
+        centers.size > 12
+          ? [...centers.values()].sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 8)
+          : centers.values());
       centers.forEach((center, key) => {
-        // With dozens of communities, labelling 2-node clusters is pure noise at
-        // fit-zoom; they come back once the user zooms in.
-        if (centers.size > 12 && (center.count || 0) < 3 && transform.k < 2) return;
+        if (transform.k < 2 && !majorCenters.has(center)) return;
         const label = document.createElementNS(SVGNS, "text");
         label.setAttribute("class", "cluster-label");
         label.setAttribute("x", center.x);

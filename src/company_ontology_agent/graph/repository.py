@@ -133,6 +133,12 @@ class Neo4jGraphRepository:
             )
         for entity in graph.entities:
             labels = f"DemoNode:Entity:{entity.type.value}"
+            # Business rows also get their mapped type (Team, League, Player...) as a
+            # label — Neo4j Bloom/Explore color by label, so without this every
+            # structured entity renders as one undifferentiated BusinessEntity color.
+            mapped = str(entity.metadata.get("mapped_type") or "")
+            if mapped and mapped != entity.type.value and mapped.isidentifier():
+                labels += f":{mapped}"
             props = _neo4j_props(
                 {
                     **entity.model_dump(mode="json"),

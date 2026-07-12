@@ -268,6 +268,7 @@
         const center = centers.get(key);
         center.x = members.reduce((s, n) => s + n.x, 0) / members.length;
         center.labelY = Math.max(14, Math.min(...members.map((n) => n.y)) - 12);
+        center.count = members.length;
       });
 
       view = { nodes: f.nodes, links, centers, localById: local };
@@ -283,7 +284,8 @@
       const labelLayer = document.createElementNS(SVGNS, "g");
       const linkLayer = document.createElementNS(SVGNS, "g");
       const nodeLayer = document.createElementNS(SVGNS, "g");
-      viewport.append(labelLayer, linkLayer, nodeLayer);
+      // Cluster labels paint LAST so category names stay visible above the circles.
+      viewport.append(linkLayer, nodeLayer, labelLayer);
 
       const { nodes, links, centers, localById } = view;
       if (!nodes.length) {
@@ -301,6 +303,9 @@
 
       const invKc = 1 / transform.k;
       centers.forEach((center, key) => {
+        // With dozens of communities, labelling 2-node clusters is pure noise at
+        // fit-zoom; they come back once the user zooms in.
+        if (centers.size > 12 && (center.count || 0) < 3 && transform.k < 2) return;
         const label = document.createElementNS(SVGNS, "text");
         label.setAttribute("class", "cluster-label");
         label.setAttribute("x", center.x);
@@ -325,7 +330,7 @@
         line.setAttribute("class", classes.join(" "));
         line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
         line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-        line.setAttribute("stroke-width", link.key_relationship ? 2 : 1.1);
+        line.setAttribute("stroke-width", (link.key_relationship ? 2 : 1.1) * invKc);
         line.addEventListener("click", (e) => {
           e.stopPropagation();
           selectedLinkId = link.id; selectedId = null;
@@ -350,6 +355,9 @@
       // regardless of the zoom transform, so they stay readable instead of ballooning.
       const invK = 1 / transform.k;
       const cap = transform.k < 1.2 ? 16 : transform.k < 2 ? 44 : transform.k < 3 ? 90 : 150;
+      // Circles grow slower than distances while zooming, so magnifying genuinely
+      // opens space between nodes instead of magnifying the clutter.
+      const rScale = transform.k < 1.2 ? 1 : transform.k < 2 ? 0.8 : transform.k < 3 ? 0.65 : 0.5;
       const labelled = new Set(
         [...nodes].sort((a, b) => b.degree - a.degree)
           .slice(0, cap)
@@ -366,7 +374,7 @@
           showNodeDetails(node.id); render();
           if (history.replaceState) history.replaceState(null, "", "#node=" + encodeURIComponent(node.id));
         });
-        const r = Math.max(4, Math.min(15, 4.5 + Math.sqrt(node.degree) * 1.9));
+        const r = Math.max(3.5, Math.min(13, 4 + Math.sqrt(node.degree) * 1.7)) * rScale;
         const circle = document.createElementNS(SVGNS, "circle");
         circle.setAttribute("cx", node.x); circle.setAttribute("cy", node.y);
         circle.setAttribute("r", r);

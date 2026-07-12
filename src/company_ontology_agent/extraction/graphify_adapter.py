@@ -361,6 +361,7 @@ def _run_with_heartbeat(
     max_runtime_seconds: int | None = None,
 ) -> subprocess.CompletedProcess[str]:
     started = time.monotonic()
+    started_wall = time.time()
     stable_since: float | None = None
     last_signature: tuple[int, int] | None = None
     process = subprocess.Popen(
@@ -388,6 +389,10 @@ def _run_with_heartbeat(
         if completion_file is None or not completion_file.exists():
             continue
         stat = completion_file.stat()
+        if stat.st_mtime < started_wall:
+            # Stale artifact from a previous run — it would read as "stable" immediately
+            # and get a healthy extraction killed. Only a file written by THIS run counts.
+            continue
         signature = (stat.st_size, stat.st_mtime_ns)
         now = time.monotonic()
         if signature != last_signature:

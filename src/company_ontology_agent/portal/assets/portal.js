@@ -152,7 +152,13 @@
     // old freeze). Naive O(n²) repulsion is fine at the capped node count (~600 max);
     // swap in Barnes–Hut only if that cap ever grows past a couple thousand.
     function forceSpread(nodes, links, byId, width, height, centerOf) {
-      const REPULSION = 780, SPRING = 0.03, SPRING_LEN = 34, GRAVITY = 0.02;
+      const clusterCount = new Set(nodes.map((n) => (centerOf && centerOf(n)) || null)).size;
+      // Many small clusters (repo communities) need stronger cohesion or repulsion
+      // bleeds them into one blob; few large clusters (data types) can spread looser.
+      const manyClusters = clusterCount > 12;
+      const REPULSION = manyClusters ? 380 : 780;
+      const SPRING = 0.03, SPRING_LEN = 34;
+      const GRAVITY = manyClusters ? 0.07 : 0.02;
       const ITERS = 170, MAX_STEP = 26;
       const pairs = links
         .map((l) => [byId.get(l.source), byId.get(l.target)])

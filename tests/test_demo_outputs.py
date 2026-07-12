@@ -142,14 +142,13 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     visual_types = {node["name"]: node["visual_type"] for node in data["nodes"]}
     assert visual_types["predict.py"] == "File" and visual_types["Blue Team"] == "Team"
 
-    # Graphify artifacts stay linked from the portal — but NOT the heavy standalone
-    # graph.html (physics simulation freezes browsers); the portal's Repo graph is the
-    # interactive view.
+    # Graphify artifacts stay linked from the portal, including the full graph.html
+    # when present (it's only emitted when no_viz is false; heavy but wanted).
     assert {a["url"] for a in repo_data["artifacts"]} == {
+        "../graphify-out/graph.html",
         "../graphify-out/GRAPH_TREE.html",
         "../graphify-out/GRAPH_REPORT.md",
     }
-    assert "graphify-out/graph.html" not in repo_html
 
 
 def test_key_relationship_ranking_promotes_api_data_and_model_edges() -> None:

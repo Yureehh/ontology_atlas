@@ -412,13 +412,16 @@ class Neo4jGraphRepository:
         )
         from company_ontology_agent.graph.models import Assertion, Chunk, Entity, Source, SourceSpan
 
+        def restore(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+            return [_from_neo4j_props(row["props"]) for row in rows]
+
         return ExtractedGraph(
             project_slug=project_slug,
-            sources=[Source.model_validate(row["props"]) for row in source_rows],
-            source_spans=[SourceSpan.model_validate(row["props"]) for row in span_rows],
-            chunks=[Chunk.model_validate(row["props"]) for row in chunk_rows],
-            entities=[Entity.model_validate(row["props"]) for row in entity_rows],
-            assertions=[Assertion.model_validate(row["props"]) for row in assertion_rows],
+            sources=[Source.model_validate(props) for props in restore(source_rows)],
+            source_spans=[SourceSpan.model_validate(props) for props in restore(span_rows)],
+            chunks=[Chunk.model_validate(props) for props in restore(chunk_rows)],
+            entities=[Entity.model_validate(props) for props in restore(entity_rows)],
+            assertions=[Assertion.model_validate(props) for props in restore(assertion_rows)],
         )
 
 
@@ -426,6 +429,27 @@ def _visual_relationship_type(predicate: str) -> str:
     safe = "".join(character if character.isalnum() else "_" for character in predicate)
     safe = "_".join(part for part in safe.split("_") if part)
     return safe.upper() or "RELATED_TO"
+
+
+def _from_neo4j_props(props: object) -> dict[str, object]:
+    """Inverse of _neo4j_props: restore *_json string properties to their dicts.
+
+    Without this, entities read back from Neo4j lose their metadata (mapped_type,
+    dataset, domain...) and the wiki/portal degrade every structured row to a
+    generic BusinessEntity.
+    """
+    if not isinstance(props, Mapping):
+        return {}
+    restored: dict[str, object] = {}
+    for key, value in props.items():
+        if key.endswith("_json") and isinstance(value, str):
+            try:
+                restored[key.removesuffix("_json")] = json.loads(value)
+            except ValueError:
+                restored[key] = value
+        else:
+            restored[key] = value
+    return restored
 
 
 def _neo4j_props(props: Mapping[str, object]) -> dict[str, object]:

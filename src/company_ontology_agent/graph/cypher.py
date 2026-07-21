@@ -14,6 +14,10 @@ CREATE CONSTRAINT chunk_id IF NOT EXISTS
 FOR (c:Chunk)
 REQUIRE c.id IS UNIQUE;
 
+CREATE CONSTRAINT knowledge_chunk_id IF NOT EXISTS
+FOR (c:KnowledgeChunk)
+REQUIRE c.id IS UNIQUE;
+
 CREATE CONSTRAINT assertion_id IF NOT EXISTS
 FOR (a:Assertion)
 REQUIRE a.id IS UNIQUE;

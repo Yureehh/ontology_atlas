@@ -376,8 +376,8 @@ class WikiExporter:
 
     def _graph_rag_page(self, graph: ExtractedGraph, display_name: str) -> str:
         return (
-            f"# {display_name} GraphRAG Readiness\n\n"
-            "The graph is ready for retrieval over:\n\n"
+            f"# {display_name} GraphRAG\n\n"
+            "Ask cited questions across:\n\n"
             "- curated architecture relationships,\n"
             "- Graphify-derived code/documentation relationships,\n"
             "- source-backed assertions with evidence spans,\n"
@@ -386,6 +386,7 @@ class WikiExporter:
             "- What are the main backend/frontend/data responsibilities?\n"
             "- Which technologies support deployment and persistence?\n"
             "- Which files define API endpoints and data models?\n"
+            "\nRun `ontology-agent rag index`, then use Ask or `ontology-agent rag ask`.\n"
         )
 
     def _data_graph_page(self, graph: ExtractedGraph, display_name: str) -> str:
@@ -419,13 +420,11 @@ class WikiExporter:
         return (
             f"# {display_name} Manager Demo Guide\n\n"
             "Demo flow:\n\n"
-            "1. Open the portal and start from the architecture graph.\n"
-            "2. Show `wiki/architecture.md` and `wiki/graph-summary.md`.\n"
-            "3. Open Neo4j and run `graph/explore.cypher` query 1 for the curated graph.\n"
-            "4. Open Graphify `graph.html` or `GRAPH_TREE.html` as supporting "
-            "extraction evidence.\n"
-            "5. Explain that GraphRAG can traverse from a question to graph nodes "
-            "and evidence spans.\n\n"
+            "1. Open Ask and run the Customer Profile impact question.\n"
+            "2. Expand its citations and explain authoritative versus extracted evidence.\n"
+            "3. Open Explore and switch between Architecture and Business data layers.\n"
+            "4. Show Trust for source coverage, index freshness, and evaluation results.\n"
+            "5. Use `GRAPH_TREE.html` only as secondary extraction diagnostics.\n\n"
             f"Current graph: {len(graph.entities)} entities, {len(graph.assertions)} assertions.\n"
         )
 
@@ -444,18 +443,14 @@ class WikiExporter:
         for assertion, target in sorted(
             outgoing, key=lambda item: (item[0].predicate, item[1].name)
         ):
-            lines.append(
-                f"- `{assertion.predicate}` [[{entity_wiki_ref(target)}|{target.name}]]"
-            )
+            lines.append(f"- `{assertion.predicate}` [[{entity_wiki_ref(target)}|{target.name}]]")
         lines.extend(["", "## Incoming", ""])
         if not incoming:
             lines.append("- None")
         for assertion, source in sorted(
             incoming, key=lambda item: (item[0].predicate, item[1].name)
         ):
-            lines.append(
-                f"- [[{entity_wiki_ref(source)}|{source.name}]] `{assertion.predicate}`"
-            )
+            lines.append(f"- [[{entity_wiki_ref(source)}|{source.name}]] `{assertion.predicate}`")
         return "\n".join(lines) + "\n"
 
     def _source_page(
@@ -512,10 +507,7 @@ class WikiExporter:
         lines.extend(["", "## Entities", ""])
         for entity in sorted(entities, key=lambda item: item.name)[:200]:
             mapped_type = entity.metadata.get("mapped_type", entity.type.value)
-            lines.append(
-                f"- [[{entity_wiki_ref(entity)}|{entity.name}]] "
-                f"(`{mapped_type}`)"
-            )
+            lines.append(f"- [[{entity_wiki_ref(entity)}|{entity.name}]] (`{mapped_type}`)")
         return "\n".join(lines) + "\n"
 
     def _dataset_page(self, graph: ExtractedGraph, dataset: str) -> str:
@@ -536,10 +528,7 @@ class WikiExporter:
         ]
         for entity in sorted(entities, key=lambda item: item.name)[:200]:
             mapped_type = entity.metadata.get("mapped_type", entity.type.value)
-            lines.append(
-                f"- [[{entity_wiki_ref(entity)}|{entity.name}]] "
-                f"(`{mapped_type}`)"
-            )
+            lines.append(f"- [[{entity_wiki_ref(entity)}|{entity.name}]] (`{mapped_type}`)")
         return "\n".join(lines) + "\n"
 
 

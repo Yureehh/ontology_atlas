@@ -101,6 +101,9 @@ def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     assert "view:" in makefile
     assert "verify-visuals:" in makefile
     assert "demo:" in makefile
+    assert "rag-index:" in makefile
+    assert "rag-evaluate:" in makefile
+    assert (project / "rag" / "questions.yaml").exists()
 
     config = load_project_config(project)
     assert config.project_slug == "acme-poc"

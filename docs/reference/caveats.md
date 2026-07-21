@@ -5,10 +5,9 @@ are deliberate scope/lightweight trade-offs.
 
 ## Retrieval / GraphRAG
 
-- **Semantic search is off by default.** The retrievers (`retrieval/*.py`) are keyword +
-  graph-traversal only. `embedding.provider` in `project.yaml` is **declarative** — no vectors
-  are computed or stored until the embedding+vector-index path is implemented. See
-  [GraphRAG Readiness](../architecture/graph-rag.md) for how to enable it.
+- **GraphRAG is local and OpenAI-backed in v1.** It requires Neo4j, the optional `rag`
+  dependency, configured models, and credentials. It has no authentication or tenancy and
+  should bind to localhost for demos. See [Neo4j GraphRAG](../architecture/graph-rag.md).
 
 ## Progressive updates
 
@@ -26,7 +25,7 @@ are deliberate scope/lightweight trade-offs.
 - **Offline (`file://`): the "Load full graph" lazy-load is disabled** — browsers block local
   `fetch`. The inlined all-entity search index and wiki links cover offline use; full
   interactivity needs `ontology-agent portal serve`.
-- **Page size scales with the ranking caps.** The data page inlines a ranked subset plus a
+- **Page size scales with the ranking caps.** Explore inlines ranked subsets plus a
   search index over *every* entity, so it can reach a few MB on large corpora. Tune
   `REPO_LIMIT` / `DATA_LIMIT` / `DATA_PER_TYPE_CAP` in `portal/ranking.py` to trade
   comprehensiveness for size.

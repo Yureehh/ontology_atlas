@@ -1,235 +1,165 @@
-# Company Ontology Suite
+# Ontology Atlas
 
-Company Ontology Suite is a local-first Python package that turns a repository into
-a Graphify-powered ontology asset: curated knowledge graph, Neo4j demo graph,
-generated markdown wiki, local visual portal, and GraphRAG-ready graph + wiki artifacts.
+Ontology Atlas is a local, read-only **enterprise knowledge and impact-analysis
+accelerator**. It combines code, documents, and structured business data in Neo4j so a
+decision-maker can ask a question, see the affected systems, and inspect the evidence
+behind every answer.
 
-The package is installable with UV and exposes the `ontology-agent` CLI.
+The package name and `ontology-agent` CLI remain compatible with existing projects.
 
-![Ontology portal — structured data graph](docs/assets/data-graph.svg)
+## The business outcome
 
-<sub>The portal's data-graph view (exported straight from the portal as SVG). Nodes are
-clustered by community/type and ranked by importance; the live page adds search across every
-entity, click-through evidence, a Graphify intelligence dashboard, and a run-to-run Changes
-diff. Run `ontology-agent portal serve` to explore it interactively.</sub>
+Ontology Atlas turns fragmented technical and business knowledge into five client-facing
+workspaces:
 
-## What It Produces
+- **Ask** — cited Neo4j GraphRAG answers with an impact path and evidence drawer.
+- **Explore** — one graph with All, Architecture, and Business data layers.
+- **Insights** — hotspots, surprising links, and community cohesion.
+- **Changes** — additions, removals, and modified graph elements between runs.
+- **Trust** — source coverage, evidence tiers, rejected assertions, index freshness, and
+  golden-question evaluation.
 
-- Graphify/OpenAI source graph and reports.
-- Validated ontology graph with provenance and confidence.
-- Neo4j-ready canonical graph plus curated entity-to-entity visual relationships.
-- Markdown wiki with architecture, data, deployment, API, module, and GraphRAG pages.
-- Local static portal: data graph, repo graph, a Graphify intelligence dashboard
-  (hotspots, surprising links, refactor candidates, suggested questions, data quality),
-  and a Changes tab that diffs each run against the last.
-- Progressive re-runs: incremental `graphify update` (no LLM cost) with run-to-run diffs.
-- Optional structured business-data graphs from CSV, JSON/JSONL, SQLite, and
-  PostgreSQL/Aurora-style connectors through mapping files.
+There is one canonical graph. Neo4j stores it; Explore presents it; Ask retrieves from it.
+Graphify's `graph.html` is disabled because it duplicated the product surface and became
+resource-heavy on large graphs. `GRAPH_TREE.html` and `GRAPH_REPORT.md` remain available as
+secondary diagnostics.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Repo["Source repository"] --> Import["Curated import<br/>code-docs profile"]
-    Import --> Raw["data/raw"]
-    RepoData["Structured data<br/>CSV JSON JSONL Parquet SQLite DB"] --> Connector["Connector + mapping"]
-    Raw --> Ingest["Ingestion<br/>normalization"]
-    Raw --> Graphify["Graphify + OpenAI<br/>deep extraction"]
-    Ingest --> OpenAI["Optional OpenAI<br/>structured extraction"]
-    Connector --> Validate["Pydantic + SHACL<br/>validation"]
-    Graphify --> Validate
-    OpenAI --> Validate
-    Validate --> Resolve["Entity resolution<br/>stable IDs"]
-    Resolve --> Canonical["Canonical assertions<br/>provenance + confidence"]
-    Canonical --> Neo4j["Neo4j<br/>canonical + visual relationships"]
-    Canonical --> Wiki["Generated wiki"]
-    Canonical --> Portal["Local portal<br/>graph without Neo4j"]
-    Graphify --> Artifacts["graph.html<br/>GRAPH_TREE.html<br/>GRAPH_REPORT.md"]
-    Wiki --> RAG["GraphRAG-ready context"]
-    Neo4j --> RAG
-    Portal --> Demo["Manager demo"]
-    Artifacts --> Demo
+    Sources["Code, documents, business data"] --> Extract["Graphify + structured connectors"]
+    Extract --> Validate["Validation, resolution, provenance"]
+    Validate --> Neo4j["Neo4j canonical graph"]
+    Neo4j --> Index["KnowledgeChunk vector index"]
+    Index --> Retrieve["Semantic entry + bounded graph traversal"]
+    Retrieve --> Ask["Cited answer + impact path"]
+    Validate --> Explore["Explore, Insights, Changes, Trust"]
+    Validate --> Wiki["Reviewable wiki and evidence"]
 ```
 
-## Install
+Knowledge chunks are deterministic and linked to canonical entities and source spans with
+`ABOUT` and `SUPPORTED_BY`. The official Neo4j GraphRAG `VectorCypherRetriever` performs
+semantic entry-point retrieval followed by fixed, read-only traversal. User questions never
+become Cypher.
 
-Recommended one-line install after cloning the repo:
+## Prerequisites and installation
+
+- Python 3.12+
+- Neo4j 5.18.1+
+- OpenAI API access for extraction, embeddings, and answer generation
+- UV (recommended)
 
 ```bash
-cd /Users/yureeh/Documents/ontology_atlas
-uv tool install --force .
+git clone <repository-url>
+cd ontology_atlas
+uv tool install --force '.[rag]'
 ontology-agent --help
 ```
 
-For projects with Parquet datasets:
+For local development:
 
 ```bash
-uv tool install --force '.[parquet]'
+uv sync --extra dev --extra rag
 ```
 
-Equivalent local shortcut:
+## Create and run a client project
 
 ```bash
-make install
-```
-
-If UV warns that `~/.local/bin` is not on `PATH`, run this once and restart the shell:
-
-```bash
-uv tool update-shell
-```
-
-Equivalent install from a wheel or GitLab artifact:
-
-```bash
-uv tool install --force company_ontology_agent-0.1.0-py3-none-any.whl
-```
-
-Pip also works inside an activated virtualenv:
-
-```bash
-pip install .
-ontology-agent --help
-```
-
-For a global CLI using the pip ecosystem, use `pipx`:
-
-```bash
-pipx install .
-```
-
-Use `uv sync --extra dev` only when developing this package or running its quality gates.
-Full macOS, Linux, and Windows install notes are in
-[`docs/getting-started/install.md`](docs/getting-started/install.md).
-
-## Quickstart
-
-Create a project-local ontology instance from a real repository:
-
-```bash
-ontology-agent init ontology-atlas-oracle-bets \
-  --target /Users/yureeh/dev/oracle_bets/.ontology-agent \
-  --source /Users/yureeh/dev/oracle_bets \
+ontology-agent init client-atlas \
+  --target /path/to/client/.ontology-agent \
+  --source /path/to/client \
   --source-profile code-docs \
-  --with-markdown-wiki \
-  --force
+  --with-markdown-wiki
 
-cd /Users/yureeh/dev/oracle_bets/.ontology-agent
+cd /path/to/client/.ontology-agent
 cp .env.example .env
 ```
 
-Fill `.env` with OpenAI and Neo4j credentials when available. Neo4j is optional for
-local graph viewing.
+Set Neo4j and OpenAI credentials in `.env`, then enable GraphRAG in `project.yaml`:
 
-## Daily Commands
-
-The full command guide is [docs/reference/cli.md](docs/reference/cli.md). Generated
-projects also include the same daily workflow in their local `README.md`.
-
-```bash
-make check          # dry-run graph, wiki, and portal; no Neo4j write
-make portal         # rebuild local portal from dry-run graph
-make view           # serve local portal
-make demo-dry-run   # full local demo without Neo4j
-make publish        # write canonical graph to Neo4j and export wiki/portal
-make publish-prune  # publish and mark missing generated nodes stale
-make demo           # full manager demo path with Neo4j
-make wiki           # re-export wiki from Neo4j
+```yaml
+llm:
+  provider: openai
+embedding:
+  provider: openai
+  dimension: 1536
+rag:
+  enabled: true
+  top_k: 8
+  max_hops: 2
 ```
 
-Use `make reset-neo4j` only when you intentionally want to clear the configured local
-Neo4j database for a clean PoC run.
-
-Structured dataset commands:
+Run the answer-first workflow:
 
 ```bash
-ontology-agent data sample-template data_reply
-ontology-agent data inspect
-ontology-agent data build-graph --dry-run
+ontology-agent run --neo4j
+ontology-agent rag index
+ontology-agent portal build --neo4j
+ontology-agent rag status
+ontology-agent portal serve
 ```
 
-## Additive Updates
+Open `http://127.0.0.1:8765/portal/index.html`. `explore.html` also works offline; live
+answers require `portal serve`.
 
-Normal Neo4j publishing is additive and idempotent. Stable IDs plus Cypher `MERGE`
-update existing nodes/relationships and add new ones, so regular codebase additions do
-not require deleting the graph. Use `make publish` after importing or refreshing source
-files.
+## Ten-minute demo script
 
-Dry-run mode refreshes the local JSON snapshot so validation reflects the current
-project state. For deletions and major renames, use safe pruning:
+1. **Minute 0–2 — Ask:** “Which systems are affected if Customer Profile changes?”
+2. **Minute 2–4 — Prove it:** expand citations, compare authoritative structured facts with
+   extracted claims, and show the relationship path.
+3. **Minute 4–6 — Explore:** switch between Architecture and Business data without changing
+   graph products.
+4. **Minute 6–8 — Assess impact:** select a node and run “What depends on this?”
+5. **Minute 8–9 — Show change:** open Changes to explain what moved since the last run.
+6. **Minute 9–10 — Establish trust:** open Trust and show coverage, index freshness, and the
+   golden-question score.
+
+The complete scripted build can be run with `ontology-agent demo`. When GraphRAG is enabled,
+it publishes, indexes, builds the portal, and runs the three flagship questions.
+
+## Evaluation
+
+Edit `rag/questions.yaml` with accepted entities, source paths, and explicit no-answer cases:
 
 ```bash
-ontology-agent run --neo4j --prune stale
-ontology-agent graph prune --mode stale
-ontology-agent graph prune --mode delete --yes
+ontology-agent rag evaluate
+ontology-agent portal build --neo4j
 ```
 
-`stale` marks missing generated nodes/relationships as superseded. `delete` is
-destructive and requires `--yes`.
+The report measures citation validity, expected-entity retrieval, expected-source retrieval,
+unsupported-answer refusal, latency, and per-question failures. Trust displays the saved result.
 
-## Visualization
+## Cost-bearing steps
 
-The default graph viewing path is the generated portal:
+- A first full Graphify/OpenAI extraction consumes LLM tokens.
+- `rag index` embeds only new or content-changed knowledge chunks.
+- Each supported `rag ask` call performs retrieval plus one answer-generation call.
+- Incremental Graphify updates avoid a full re-extraction when possible.
+- Portal building, offline Explore, Changes, Trust rendering, and graph traversal in the browser
+  do not call an LLM.
 
-```bash
-make check
-make view
-```
+## Explicit v1 limitations
 
-Open `portal/index.html` to inspect the evidence-first graph without Neo4j. The portal is
-three pages that share one renderer: `index.html` (the default structured-data graph),
-`repo.html` (the code/architecture graph), and `intelligence.html` (a Graphify dashboard
-of architecture hotspots, surprising connections, and community cohesion). Each page
-inlines only a bounded, ranked subset of nodes and links to the full `portal/graph.json`,
-so the HTML stays small and opens offline. Structured connector relationships are labelled
-as authoritative; Graphify/OpenAI semantic relationships show evidence, confidence tier,
-extractor, and source path. The portal also links to Graphify artifacts such as
-`graphify-out/graph.html`, `GRAPH_TREE.html`, and `GRAPH_REPORT.md` when they exist.
+- Local, single-project, read-only demo bound to `127.0.0.1` by default.
+- No authentication, tenancy, hosted deployment, MCP, or unrestricted Text2Cypher.
+- OpenAI is the supported GraphRAG embedding and generation provider in v1.
+- Golden questions are project-specific and must be curated before presenting scores.
+- Neo4j is required for live answers; the static Explore surface remains available without it.
 
-Neo4j remains the canonical backend for real graph writes. Published graphs include
-`DemoNode` labels, captions, direct `DemoProject -> DemoNode` links, and curated
-entity-to-entity relationships. In Neo4j Explore, click `DemoNode` for a no-query view.
-If Explore still shows only `Project`, `Source`, or `SourceSpan` dots, run query 1 from
-`graph/explore.cypher`. Those labels are provenance nodes; the curated graph
-intentionally excludes them.
-
-## Documentation Site
-
-MkDocs builds the documentation into `site/`. That folder is generated output, ignored
-by git, and should not be committed.
+## Development gates
 
 ```bash
-uv run --extra dev mkdocs serve
-uv run --extra dev mkdocs build --strict
-```
-
-For publishing, use `gh-pages` or a dedicated GitHub Pages workflow that builds the
-site from source docs. Do not commit generated HTML.
-
-## Quality Gates
-
-CI and local pre-commit are aligned around:
-
-```bash
-uv sync --extra dev
-uv run --extra dev pytest
-uv run --extra dev ruff check .
-uv run --extra dev mypy src/company_ontology_agent
-uv run --extra dev mkdocs build --strict
+uv run --extra dev --extra rag pytest
+uv run --extra dev --extra rag ruff check .
+uv run --extra dev --extra rag mypy src/company_ontology_agent
+uv run --extra dev --extra rag mkdocs build --strict
 uv build
 ```
 
-Local shortcut:
+See [the CLI reference](docs/reference/cli.md),
+[GraphRAG architecture](docs/architecture/graph-rag.md), and
+[portal architecture](docs/architecture/portal.md) for operational detail.
 
-```bash
-make check
-```
-
-Install local hooks with:
-
-```bash
-uv run --extra dev pre-commit install
-```
-
-The pre-commit hook runs the fast checks. Run the full gate above before publishing or
-opening a release PR.
+MkDocs builds the documentation into `site/`; that generated directory is ignored and should
+not be committed. Publish from source with a `gh-pages` workflow or an equivalent docs host.

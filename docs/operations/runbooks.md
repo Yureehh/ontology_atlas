@@ -21,7 +21,6 @@ ontology-agent ingest ./data/raw
 ontology-agent graphify run
 ontology-agent graphify cluster
 ontology-agent graphify tree
-open graphify-out/graph.html
 open graphify-out/GRAPH_TREE.html
 open graphify-out/GRAPH_REPORT.md
 ```
@@ -30,7 +29,6 @@ Expected outputs:
 
 ```text
 graphify-out/graph.json
-graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
 ```
@@ -58,15 +56,16 @@ data/processed/rejected/summary.md
 wiki/index.md
 wiki/graph-summary.md
 portal/index.html
-portal/repo.html
+portal/ask.html
+portal/explore.html
 portal/intelligence.html
 portal/changes.html
+portal/trust.html
 portal/graph.json
 ```
 
-`make view` serves the local portal. It is the easiest way to inspect the graph when
-you do not want Neo4j. `index.html` redirects to the populated layer; the tabs are repo graph,
-data graph, the Graphify intelligence dashboard, and a Changes diff against the previous run.
+`make view` serves the local portal. Without a populated Neo4j GraphRAG index, Ask reports its
+readiness state while Explore remains available. `index.html` redirects to Ask.
 
 ## Oracle Bets Clean Manager Demo
 
@@ -85,6 +84,8 @@ make clean-generated
 make reset-neo4j
 make check
 make publish-prune
+make rag-index
+make rag-evaluate
 make verify-visuals
 make view
 ```
@@ -93,12 +94,13 @@ Expected final outputs:
 
 ```text
 portal/index.html
+portal/ask.html
+portal/explore.html
 portal/graph.json
 wiki/index.html
 wiki/architecture.html
 wiki/data-graph.html
 wiki/graph-summary.html
-graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
 graph/explore.cypher

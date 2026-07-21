@@ -89,7 +89,7 @@ def test_parquet_connector_projects_composite_keys_and_template_names(tmp_path: 
         "    source: predictions\n"
         "    type: Prediction\n"
         "    key: [gameid, side]\n"
-        "    name: \"Prediction {gameid} {side}\"\n"
+        '    name: "Prediction {gameid} {side}"\n'
         "    properties: [prediction, proba]\n"
         "  match:\n"
         "    source: predictions\n"
@@ -200,15 +200,17 @@ def test_portal_and_wiki_include_domain_dataset_filters(tmp_path: Path) -> None:
         display_name="Ontology Atlas Oracle Bets Ontology",
     )
 
-    # Structured-data graph → index.html redirects to the data layer page.
-    html = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
+    # Structured data uses the Business data filter in the single Explore surface.
+    html = (tmp_path / "portal" / "explore.html").read_text(encoding="utf-8")
+    legacy_data = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
     graph_json = json.loads((tmp_path / "portal" / "graph.json").read_text(encoding="utf-8"))
     wiki_index = (tmp_path / "wiki" / "index.html").read_text(encoding="utf-8")
     wiki_data_graph = (tmp_path / "wiki" / "data-graph.html").read_text(encoding="utf-8")
     assert 'id="domain"' not in html
     assert 'id="extractor"' not in html
-    assert 'id="graph-kind"' not in html  # legacy in-page layer toggle is gone
+    assert 'id="layer"' in html
     assert 'id="dataset"' in html
+    assert "explore.html#layer=data" in legacy_data
     assert 'id="predicate"' in html
     assert graph_json["nodes"][0]["domain"] == "people"
     assert graph_json["nodes"][0]["graph_kind"] == "data"

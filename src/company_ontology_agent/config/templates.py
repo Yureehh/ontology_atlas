@@ -4,6 +4,7 @@ from pathlib import Path
 
 from company_ontology_agent.config.project_config import default_config, write_project_config
 from company_ontology_agent.graph.bootstrap import write_bootstrap_files
+from company_ontology_agent.retrieval.questions import FLAGSHIP_QUESTIONS, NO_ANSWER_QUESTION
 from company_ontology_agent.storage.local import ensure_project_dirs
 from company_ontology_agent.storage.metadata import init_metadata_store
 
@@ -26,6 +27,7 @@ def scaffold_project(
     _write_gitignore(target)
     _write_env_example(target)
     _write_ontology_defaults(target)
+    _write_rag_questions(target)
     _write_makefile(target)
     _write_scripts(target)
     _write_readme(target, project_slug, with_docker, with_markdown_wiki)
@@ -69,6 +71,9 @@ def _write_gitignore(target: Path) -> None:
         "*.log\n\n"
         "# Rebuildable local demo portal\n"
         "portal/\n\n"
+        "# Rebuildable GraphRAG measurements\n"
+        "rag/evaluation.json\n"
+        "rag/index-status.json\n\n"
         "# Graphify intermediates\n"
         "graphify-out/**\n"
         "!graphify-out/\n"
@@ -260,6 +265,29 @@ def _write_ontology_defaults(target: Path) -> None:
     (target / "ontology" / "datasets").mkdir(parents=True, exist_ok=True)
 
 
+def _write_rag_questions(target: Path) -> None:
+    (target / "rag" / "questions.yaml").write_text(
+        "# Replace expected entities and sources with this project's accepted ground truth.\n"
+        "questions:\n"
+        "  - id: customer-profile-impact\n"
+        f"    question: {FLAGSHIP_QUESTIONS[0]}\n"
+        "    expected_entities: [Customer Profile]\n"
+        "    expected_sources: []\n"
+        "    should_answer: true\n"
+        "  - id: dependency-evidence\n"
+        f"    question: {FLAGSHIP_QUESTIONS[1]}\n"
+        "    expected_entities: []\n"
+        "    expected_sources: []\n"
+        "    should_answer: true\n"
+        "  - id: explicit-no-answer\n"
+        f"    question: {NO_ANSWER_QUESTION}\n"
+        "    expected_entities: []\n"
+        "    expected_sources: []\n"
+        "    should_answer: false\n",
+        encoding="utf-8",
+    )
+
+
 def _write_makefile(target: Path) -> None:
     (target / "Makefile").write_text(
         "SHELL := /bin/bash\n"
@@ -269,7 +297,8 @@ def _write_makefile(target: Path) -> None:
         ".PHONY: all check publish publish-prune portal portal-neo4j view demo "
         "demo-dry-run reset-neo4j clean-generated "
         "ci docs doctor ingest graphify dry-run graph wiki sync-dry-run full-stack "
-        "sync-neo4j serve smoke-dry-run data-inspect data-sample "
+        "sync-neo4j serve smoke-dry-run data-inspect data-sample rag-index rag-status "
+        "rag-evaluate "
         "smoke-neo4j test\n\n"
         "check:\n\t$(ONTOLOGY_AGENT) run --dry-run\n\n"
         "publish:\n\t$(ONTOLOGY_AGENT) run --neo4j\n\n"
@@ -277,11 +306,15 @@ def _write_makefile(target: Path) -> None:
         "portal:\n\t$(ONTOLOGY_AGENT) portal build --dry-run\n\n"
         "portal-neo4j:\n\t$(ONTOLOGY_AGENT) portal build --neo4j\n\n"
         "view:\n\t$(ONTOLOGY_AGENT) portal serve\n\n"
+        "rag-index:\n\t$(ONTOLOGY_AGENT) rag index\n\n"
+        "rag-status:\n\t$(ONTOLOGY_AGENT) rag status\n\n"
+        "rag-evaluate:\n\t$(ONTOLOGY_AGENT) rag evaluate\n\n"
         "demo:\n\t$(ONTOLOGY_AGENT) demo\n\n"
         "demo-dry-run:\n\t$(ONTOLOGY_AGENT) demo --dry-run\n\n"
         "all:\n\t$(ONTOLOGY_AGENT) full-stack\n\n"
         "reset-neo4j:\n\t$(ONTOLOGY_AGENT) graph reset --yes\n\n"
-        "clean-generated:\n\trm -rf data/normalized data/processed wiki portal graphify-out\n\n"
+        "clean-generated:\n\trm -rf data/normalized data/processed wiki portal graphify-out "
+        "rag/evaluation.json rag/index-status.json\n\n"
         "ci:\n"
         "\tuv run --extra dev pytest\n"
         "\tuv run --extra dev ruff check .\n"
@@ -400,6 +433,9 @@ def _write_readme(
         "make view\n"
         "make demo-dry-run\n"
         "make publish\n"
+        "make rag-index\n"
+        "make rag-status\n"
+        "make rag-evaluate\n"
         "make demo\n"
         "make all\n"
         "make wiki\n"
@@ -407,8 +443,8 @@ def _write_readme(
         "\n"
         "The `wiki/` folder is project-local and intended to be committed. "
         "`data/normalized/`, `data/processed/`, and Graphify internals are rebuildable "
-        "and ignored by git. Use `make portal` or `make view` for local graph viewing "
-        "without Neo4j. `make publish` is additive and idempotent in Neo4j; use "
+        "and ignored by git. Use `make portal` for offline Explore or `make view` for "
+        "live cited answers. `make publish` is additive and idempotent in Neo4j; use "
         "`make reset-neo4j` only for a clean local rebuild. In Neo4j Explore, click "
         "`DemoNode` for the no-query view or use `graph/explore.cypher` query 1 for "
         "the curated manager demo graph.\n",

@@ -16,6 +16,8 @@ manomano-poc/
 │   ├── normalized/
 │   └── processed/
 ├── graphify-out/
+├── rag/
+│   └── questions.yaml
 ├── ontology/
 │   ├── core.ttl
 │   ├── shapes.ttl
@@ -79,7 +81,8 @@ Generated wiki pages live under `wiki/` and are intended to be committed.
 - `ontology/`: project governance files, including allowed entity types, predicates, SHACL shapes, and structured dataset mappings.
 - `graph/`: Neo4j bootstrap constraints and future migrations.
 - `graphify-out/`: Graphify intermediate output and latest human report.
-- `portal/`: generated local graph viewer; rebuildable and not committed by default.
+- `rag/`: golden questions plus rebuildable index/evaluation status.
+- `portal/`: generated answer-first workspace; rebuildable and not committed by default.
 - `wiki/`: generated markdown knowledge base intended for human review and git commits.
 
 Use `ontology-agent import-raw /path/to/source-folder --profile code-docs --clear` to populate `data/raw/` safely. It avoids accidentally creating nested paths such as `data/raw/raw` and excludes common noisy folders such as `.venv`, `node_modules`, caches, secrets, generated reports, and binary artifacts.
@@ -94,6 +97,9 @@ make portal      # rebuild local portal from dry-run graph
 make view        # serve the local portal
 make demo-dry-run # full local visual demo without Neo4j
 make publish     # write Neo4j graph and export wiki
+make rag-index   # create/update deterministic knowledge embeddings
+make rag-status  # report GraphRAG readiness
+make rag-evaluate # run project golden questions
 make publish-prune # write Neo4j graph and mark missing generated items stale
 make verify-visuals # verify curated Neo4j demo relationships
 make all         # dry-run first, then Neo4j sync

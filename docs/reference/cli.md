@@ -73,13 +73,8 @@ ontology-agent demo
 ontology-agent demo --dry-run
 ```
 
-Runs the manager-demo path and prints the important output locations:
-
-- Neo4j Explore guide,
-- generated `graph/explore.cypher`,
-- generated portal,
-- generated wiki,
-- Graphify report.
+Runs validation, Neo4j publish, optional GraphRAG indexing, portal build, and the three
+flagship impact/evidence questions. It prints the generated portal, wiki, and diagnostics.
 
 `--dry-run` skips Neo4j and uses the local JSON graph for the portal and wiki.
 
@@ -142,9 +137,30 @@ ontology-agent portal serve --port 8765
 ```
 
 Builds or serves the static local demo portal under `portal/`. The build emits sibling
-pages that share one renderer — `index.html` (a redirect to the populated layer),
-`data-graph.html` (the connector data graph), `repo.html` (the code/architecture graph),
-`intelligence.html` (the Graphify dashboard), and `changes.html` — plus the complete `graph.json`.
+pages that share one renderer: Ask, Explore, Insights, Changes, and Trust. Explore filters
+one combined graph into All, Architecture, and Business data layers. The old `repo.html`
+and `data-graph.html` URLs remain compatibility redirects.
+
+`portal serve` binds to `127.0.0.1` by default, serves static project assets, and exposes
+the read-only GraphRAG API. Ask requires the server; Explore remains usable through `file://`.
+
+## `ontology-agent rag`
+
+```bash
+ontology-agent rag index
+ontology-agent rag status
+ontology-agent rag ask "Which systems are affected if Customer Profile changes?"
+ontology-agent rag evaluate
+```
+
+`index` creates or incrementally updates deterministic `KnowledgeChunk` embeddings in the
+configured Neo4j vector index. `status` reports readiness and indexed chunk count. `ask`
+returns the same typed JSON contract used by the portal API: answer, trace ID, citations,
+entities, paths, evidence tiers, scores, warnings, and timings.
+
+`evaluate` runs `rag/questions.yaml`, reports citation validity, expected-entity/source
+retrieval, no-answer refusal, latency, and failures, then saves `rag/evaluation.json` for
+the Trust page.
 
 ## `ontology-agent doctor`
 

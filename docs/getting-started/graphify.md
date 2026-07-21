@@ -54,13 +54,15 @@ Graphify outputs remain intermediate artifacts under:
 
 ```text
 graphify-out/
-├── graph.html
 ├── graph.json
 ├── GRAPH_TREE.html
 ├── GRAPH_REPORT.md
 ├── cache/
 └── cypher.txt
 ```
+
+`graph.html` is disabled by default. It duplicated Explore and its physics layout became
+resource-heavy on large corpora. Use Ontology Atlas Explore for the client-facing graph.
 
 ## Canonical Graph Rule
 
@@ -87,7 +89,7 @@ graphify:
   backend: openai
   mode: deep
   update: true
-  no_viz: false
+  no_viz: true
   timeout_seconds: null
   auto_name_communities: true
 ```
@@ -117,7 +119,6 @@ ontology-agent ingest ./data/raw
 ontology-agent graphify run
 ontology-agent graphify cluster
 ontology-agent graphify tree
-open graphify-out/graph.html
 open graphify-out/GRAPH_TREE.html
 open graphify-out/GRAPH_REPORT.md
 ```

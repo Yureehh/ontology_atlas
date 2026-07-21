@@ -108,7 +108,7 @@ def build_intelligence(
 
     refactor_candidates = _refactor_candidates(communities)
     questions = _suggested_questions(graph, hotspots, surprises, communities, page_ids)
-    quality = _quality(graph)
+    quality = build_quality(graph)
 
     tokens = analysis.get("tokens", {}) or {}
     return {
@@ -197,8 +197,8 @@ def _suggested_questions(
     return questions
 
 
-def _quality(graph: ExtractedGraph) -> dict[str, Any]:
-    """In-process data-quality signals over the relationships (duplicates, self-loops, multi-edges)."""
+def build_quality(graph: ExtractedGraph) -> dict[str, Any]:
+    """Measure duplicates, self-loops, and multi-edges in extracted relationships."""
     triple_counts: Counter[tuple[str, str, str]] = Counter()
     pair_predicates: dict[tuple[str, str], set[str]] = defaultdict(set)
     self_loops = 0

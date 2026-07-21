@@ -63,8 +63,7 @@ def test_curated_projection_does_not_treat_generic_vector_as_pgvector(
     raw = tmp_path / "data/raw/backend"
     raw.mkdir(parents=True)
     (raw / "features.py").write_text(
-        "class FeatureVector:\n"
-        "    pass\n",
+        "class FeatureVector:\n    pass\n",
         encoding="utf-8",
     )
     config = default_config("vector-poc")
@@ -98,39 +97,47 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     names = {path.name for path in files}
     assert {
         "index.html",
+        "ask.html",
+        "explore.html",
         "data-graph.html",
         "repo.html",
         "intelligence.html",
+        "trust.html",
         "graph.json",
     } <= names
     # Legacy single-page artifact must be gone.
     assert not (tmp_path / "portal/repo-ontology.html").exists()
 
     index_html = (tmp_path / "portal/index.html").read_text(encoding="utf-8")
-    data_graph_html = (tmp_path / "portal/data-graph.html").read_text(encoding="utf-8")
-    repo_html = (tmp_path / "portal/repo.html").read_text(encoding="utf-8")
+    ask_html = (tmp_path / "portal/ask.html").read_text(encoding="utf-8")
+    explore_html = (tmp_path / "portal/explore.html").read_text(encoding="utf-8")
     intel_html = (tmp_path / "portal/intelligence.html").read_text(encoding="utf-8")
     data = json.loads((tmp_path / "portal/graph.json").read_text(encoding="utf-8"))
 
-    # index.html is a lightweight redirect to the populated layer (repo here: 3 repo vs 2 data).
+    # index.html is a lightweight redirect to the answer-first experience.
     assert "Ontology Portal" in index_html
-    assert "url=repo.html" in index_html
+    assert "url=ask.html" in index_html
     assert "const rawData" not in index_html
 
     def bootstrap(html: str) -> dict:
         return json.loads(re.search(r'id="portal-data">(.*?)</script>', html, re.S).group(1))
 
-    data_graph_data = bootstrap(data_graph_html)
-    repo_data = bootstrap(repo_html)
+    ask_data = bootstrap(ask_html)
+    explore_data = bootstrap(explore_html)
     intel_data = bootstrap(intel_html)
-    assert data_graph_data["page"] == "data" and data_graph_data["kind"] == "data"
-    assert repo_data["page"] == "repo" and repo_data["kind"] == "repo"
+    assert ask_data["page"] == "ask"
+    assert explore_data["page"] == "explore" and explore_data["kind"] == "all"
     assert intel_data["page"] == "intelligence"
     # Shared shell + tabs render on the real pages.
-    assert "Oracle Bets" in repo_html  # public_project_name strips "Ontology Atlas"
-    assert 'href="data-graph.html"' in repo_html and 'href="intelligence.html"' in repo_html
-    assert {node["name"] for node in data_graph_data["nodes"]} == {"Blue Team", "Match 1"}
-    assert {node["name"] for node in repo_data["nodes"]} == {"Backend", "FastAPI", "predict.py"}
+    assert "Oracle Bets" in explore_html  # public_project_name strips "Ontology Atlas"
+    assert 'href="ask.html"' in explore_html and 'href="trust.html"' in explore_html
+    assert {node["name"] for node in explore_data["nodes"]} == {
+        "Backend",
+        "FastAPI",
+        "predict.py",
+        "Blue Team",
+        "Match 1",
+    }
 
     # The full graph.json keeps everything, flat, with rich link metadata.
     assert len(data["nodes"]) == 5 and len(data["links"]) == 2
@@ -142,10 +149,8 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     visual_types = {node["name"]: node["visual_type"] for node in data["nodes"]}
     assert visual_types["predict.py"] == "File" and visual_types["Blue Team"] == "Team"
 
-    # Graphify artifacts stay linked from the portal, including the full graph.html
-    # when present (it's only emitted when no_viz is false; heavy but wanted).
-    assert {a["url"] for a in repo_data["artifacts"]} == {
-        "../graphify-out/graph.html",
+    # The heavy standalone Graphify graph is not part of the product deliverable.
+    assert {a["url"] for a in explore_data["artifacts"]} == {
         "../graphify-out/GRAPH_TREE.html",
         "../graphify-out/GRAPH_REPORT.md",
     }
@@ -211,11 +216,7 @@ def test_key_relationship_ranking_promotes_api_data_and_model_edges() -> None:
     )
 
     sections = key_relationship_sections(graph, per_section=4)
-    chosen = {
-        assertion.id
-        for items in sections.values()
-        for assertion, _, _ in items
-    }
+    chosen = {assertion.id for items in sections.values() for assertion, _, _ in items}
 
     assert {"api", "data", "pred"}.issubset(chosen)
     assert "c1" not in chosen or "c2" not in chosen

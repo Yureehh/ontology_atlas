@@ -1,70 +1,98 @@
-# GraphRAG Readiness
+# Neo4j GraphRAG
 
-V1 does not claim to be a hosted vector platform. It prepares the graph and evidence
-shape needed for GraphRAG.
+Ontology Atlas uses Neo4j as both the canonical knowledge graph and the semantic retrieval
+store. It does not maintain a second client-facing graph or execute user-authored Cypher.
 
-## Retrieval Shape
+## Indexing
 
-The graph contains:
+`ontology-agent rag index` reads the canonical graph and creates one deterministic
+`KnowledgeChunk` per entity. Each chunk includes:
 
-- curated ontology entities such as `Module`, `APIEndpoint`, `DataModel`, `Technology`,
-  `Database`, and `DeploymentUnit`,
-- validated assertions with predicate, confidence, status, extractor, and evidence,
-- source spans and chunks for provenance,
-- direct Neo4j relationships for graph traversal,
-- raw Graphify nodes/edges as supporting extraction context when available.
+- the entity description and mapped type,
+- incoming and outgoing relationship statements,
+- evidence excerpts and source paths,
+- generated wiki context, its path, and evidence classification,
+- project slug, content hash, embedding model, and source-span IDs.
 
-## Query Path
+Neo4j relationships preserve traceability:
 
-The query path is:
+```text
+(KnowledgeChunk)-[:ABOUT]->(Entity)
+(KnowledgeChunk)-[:SUPPORTED_BY]->(SourceSpan)<-[:HAS_SPAN]-(Source)
+```
+
+Only new or content-changed chunks are embedded. Missing chunks are removed, and the saved
+index status records model, freshness, indexed, unchanged, and deleted counts. The configured
+vector dimension must match the provider output.
+
+## Query path
 
 ```text
 question
-  -> graph entity match
-  -> relationship neighborhood
-  -> evidence spans/wiki chunks
-  -> answer with trace id
+  -> VectorCypherRetriever (project-filtered semantic candidates)
+  -> fixed one-to-three-hop entity traversal
+  -> source spans, paths, evidence tiers, and scores
+  -> evidence-only answer prompt
+  -> typed answer with citations and trace ID
 ```
 
-The retrieval layer lives in `retrieval/` (`graph_retriever`, `wiki_retriever`,
-`hybrid_retriever`, `answerer`) and is consumed in-process — it grounds answers on the same
-`graph.json` and wiki the portal renders.
+The implementation uses the official `neo4j-graphrag[openai]` package. The default traversal
+is two hops and is capped at three. Both the vector filter and the fixed retrieval query require
+the active `project_slug`, preventing another project's chunks from entering an answer.
 
-## Retrieval artifacts for downstream RAG
+Retrieved text is explicitly treated as untrusted content. The prompt tells the model not to
+follow instructions inside evidence, to distinguish authoritative structured facts from
+extracted claims, and to refuse when support is missing.
 
-The two outputs are RAG-ready as-is:
+## Configuration
 
-- **`portal/graph.json`** — the complete graph: every node (`id`, `name`, `type`, `community`,
-  `source_path`, `description`) and every edge (`predicate`, `confidence`, `evidence`,
-  `source_path`, `evidence_level`, `key_relationship`). Use it for graph grounding / traversal.
-- **`wiki/**.md`** — markdown with YAML frontmatter (`id`, `type`, `graph_node_id`, `sources`)
-  and `[[wikilinks]]`, ideal for chunk-level retrieval with provenance.
+```yaml
+graph:
+  vector_index_name: chunk_embeddings
+embedding:
+  provider: openai
+  model_env: ONTOLOGY_AGENT_EMBEDDING_MODEL
+  dimension: 1536
+llm:
+  provider: openai
+  model_env: ONTOLOGY_AGENT_LLM_MODEL
+  api_key_env: OPENAI_API_KEY
+rag:
+  enabled: true
+  top_k: 8
+  max_hops: 2
+```
 
-## Embeddings (semantic search) — off by default
+The runtime fails clearly when Neo4j credentials, OpenAI credentials, models, the optional
+dependency, or vector configuration are unavailable.
 
-!!! warning "Declarative only today"
-    `embedding.provider: none` in `project.yaml` is **declarative**. No embeddings are computed
-    or stored, and the retrievers do keyword + graph-traversal matching only — there is no vector
-    search yet. Setting `provider: openai` alone changes nothing until the vector path is built.
+## Interfaces
 
-To enable semantic retrieval later you would: (1) compute embeddings for wiki chunks / entities
-with the configured provider, (2) populate a vector index (Neo4j `chunk_embeddings` or a local
-store), and (3) extend `graph_retriever`/`wiki_retriever` to query it. Kept out of the default
-build to stay lightweight, dependency-light, and zero-cost. See [Caveats](../reference/caveats.md).
+```bash
+ontology-agent rag index
+ontology-agent rag status
+ontology-agent rag ask "Which systems are affected if Customer Profile changes?"
+ontology-agent rag evaluate
+```
 
-## Which substrate — and how to plug into Neo4j
+`ontology-agent portal serve` adds the same read-only contract to the local portal:
 
-Two layers, two jobs: **retrieve** entry entities from the text, then **traverse** the graph for
-multi-hop context. Use both.
+- `GET /api/rag/status`
+- `POST /api/rag/query` with `{ "question": "..." }`
 
-- **Retrieve** over `wiki/entities/*.md` (embed the chunks) — this is the text layer with provenance.
-- **Traverse** in **Neo4j** — run `ontology-agent run --neo4j` to upsert the validated graph, then
-  point an agent at it. Recommended path: Neo4j's native vector index for the wiki chunk embeddings +
-  Cypher for neighborhood traversal, wired with the official `neo4j-graphrag` package or LangChain's
-  `Neo4jVector` / `GraphCypherQAChain`. Neo4j is the production substrate — don't stand up a second graph store.
+Responses include the answer, trace ID, citations and excerpts, entities, relationship paths,
+retrieval scores, evidence tiers, warnings, and timings.
 
-**Can other artifacts be the graph instead?**
+## Evaluation
 
-- `portal/graph.json` — **yes, as a zero-infra fallback.** Same nodes/edges as Neo4j; load it into an
-  in-memory graph (e.g. `networkx`) and traverse. Fine for small graphs or a local script; no vector index.
-- `graphify-out/graph.html` — **no.** It is a rendered visualization (HTML), not queryable data. Never a RAG source.
+`rag/questions.yaml` is the project's acceptance suite. Supported questions declare expected
+entities and sources; unsupported questions set `should_answer: false`. `rag evaluate` measures
+citation validity, retrieval, refusal accuracy, latency, and case-level failures, then saves the
+report for the Trust page.
+
+## Deliberate boundaries
+
+V1 is local, single-project, and read-only. It does not include Text2Cypher, graph writes from
+questions, authentication, tenancy, MCP, or hosted deployment. `portal/graph.json` remains an
+offline visualization payload, not the live GraphRAG backend. Graphify's retired `graph.html`
+is never a retrieval source.

@@ -3,12 +3,24 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class Citation(BaseModel):
+    source_path: str
+    evidence: str
+    evidence_level: str = "evidence_backed"
+    score: float | None = None
+    chunk_id: str | None = None
+    source_span_ids: list[str] = Field(default_factory=list)
+
+
 class QueryResponse(BaseModel):
     answer: str
+    citations: list[Citation] = Field(default_factory=list)
+    paths: list[dict[str, object]] = Field(default_factory=list)
     supporting_assertions: list[dict[str, object]] = Field(default_factory=list)
     supporting_chunks: list[dict[str, object]] = Field(default_factory=list)
     entities: list[dict[str, object]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    timings_ms: dict[str, float] = Field(default_factory=dict)
     trace_id: str
 
 

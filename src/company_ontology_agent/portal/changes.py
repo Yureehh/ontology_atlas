@@ -75,6 +75,8 @@ def shape_changes(
         ],
         "relationships_added": [rel(a) for a in diff.assertions_added[:_LIST_CAP]],
         "relationships_removed": [rel(a) for a in diff.assertions_removed[:_LIST_CAP]],
-        "communities_changed": [delta.model_dump() for delta in diff.communities_changed[:_LIST_CAP]],
+        "communities_changed": [
+            delta.model_dump() for delta in diff.communities_changed[:_LIST_CAP]
+        ],
         "cohesion_deltas": [delta.model_dump() for delta in diff.cohesion_deltas[:_LIST_CAP]],
     }

@@ -13,6 +13,7 @@ def ensure_project_dirs(project_root: Path) -> None:
         "ontology/datasets",
         "graph/migrations",
         "graphify-out",
+        "rag",
         "wiki/entities",
         "wiki/decisions",
         "wiki/requirements",

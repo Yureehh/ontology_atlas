@@ -1,15 +1,8 @@
-"""Generate the manager-facing ontology portal.
+"""Generate the answer-first Ontology Atlas portal.
 
-The portal is three sibling HTML pages that share one renderer (``assets/portal.js``)
-and differ only by the JSON payload injected into each:
-
-* ``index.html``        — the structured **data** graph (default landing page)
-* ``repo.html``         — the **repo/code** ontology graph
-* ``intelligence.html`` — a Graphify graph-intelligence dashboard
-
-The complete graph is always written to ``graph.json`` for download/serving; each page
-only inlines a bounded, pre-ranked subset (see :mod:`portal.ranking`) so the HTML stays
-small and opens offline via ``file://``.
+The portal presents one explorable graph with architecture and business-data layers.
+GraphRAG answers, intelligence, changes, and trust signals are separate views over the
+same canonical graph rather than competing graph products.
 """
 
 from __future__ import annotations
@@ -36,6 +29,7 @@ from company_ontology_agent.graph.repository import JsonGraphRepository
 from company_ontology_agent.portal import changes as changes_mod
 from company_ontology_agent.portal import intelligence as intel
 from company_ontology_agent.portal import ranking
+from company_ontology_agent.retrieval.questions import FLAGSHIP_QUESTIONS
 from company_ontology_agent.utils.display import public_project_name
 from company_ontology_agent.utils.ids import slugify
 from company_ontology_agent.wiki.relationships import key_relationship_ids
@@ -45,13 +39,13 @@ JsonDict = dict[str, object]
 _ASSETS = files("company_ontology_agent.portal") / "assets"
 _STALE_FILES = ["repo-ontology.html"]
 
-# (filename, page id, graph layer). ``index.html`` is generated separately as a redirect to
-# whichever layer actually has content, so a fresh portal always opens on a populated graph.
+# (filename, page id). Compatibility graph pages are redirects generated separately.
 _PAGES = [
-    ("data-graph.html", "data", "data"),
-    ("repo.html", "repo", "repo"),
+    ("ask.html", "ask", None),
+    ("explore.html", "explore", "all"),
     ("intelligence.html", "intelligence", None),
     ("changes.html", "changes", None),
+    ("trust.html", "trust", None),
 ]
 
 
@@ -85,6 +79,13 @@ class PortalBuilder:
             graph, analysis, page_ids=page_ids, report_exists=report_exists
         )
         artifacts = self._graphify_artifacts(graphify_out)
+        trust_data: JsonDict = {
+            "evaluation": _load_json(project_root / "rag" / "evaluation.json"),
+            "index_status": _load_json(project_root / "rag" / "index-status.json"),
+            "rejected_assertions": _line_count(
+                project_root / "data" / "processed" / "rejected" / "rejections.jsonl"
+            ),
+        }
 
         # Run-to-run diff for the Changes tab (dry-run/JSON baseline only).
         previous = JsonGraphRepository(
@@ -104,8 +105,16 @@ class PortalBuilder:
         written: list[Path] = []
         for filename, page, layer in _PAGES:
             bootstrap = self._bootstrap(
-                graph, nodes, links, page=page, layer=layer,
-                title=title, intelligence=intelligence, changes=changes, pinned=pinned,
+                graph,
+                nodes,
+                links,
+                page=page,
+                layer=layer,
+                title=title,
+                intelligence=intelligence,
+                changes=changes,
+                pinned=pinned,
+                trust_data=trust_data,
             )
             bootstrap["artifacts"] = artifacts
             html = (
@@ -120,15 +129,21 @@ class PortalBuilder:
             path.write_text(html, encoding="utf-8")
             written.append(path)
 
-        # Land on whichever layer actually has content — repo for code/knowledge projects,
-        # data for structured-connector projects. The empty layer stays reachable via its tab.
-        repo_count = sum(1 for node in nodes if node["graph_kind"] == "repo")
-        data_count = sum(1 for node in nodes if node["graph_kind"] == "data")
-        landing = "repo.html" if repo_count >= data_count else "data-graph.html"
+        # Ask is the product's primary experience. The static page explains that live
+        # answers require ``portal serve`` while Explore remains fully offline-capable.
+        landing = "ask.html"
         (output_path / "index.html").write_text(
             _redirect_page(f"{title} · Ontology Portal", landing), encoding="utf-8"
         )
         written.append(output_path / "index.html")
+
+        for filename, layer in (("repo.html", "repo"), ("data-graph.html", "data")):
+            path = output_path / filename
+            path.write_text(
+                _redirect_page(f"{title} · Ontology Portal", f"explore.html#layer={layer}"),
+                encoding="utf-8",
+            )
+            written.append(path)
 
         written.append(output_path / "graph.json")
         return written
@@ -201,6 +216,7 @@ class PortalBuilder:
         intelligence: JsonDict | None,
         changes: JsonDict,
         pinned: frozenset[str],
+        trust_data: JsonDict,
     ) -> JsonDict:
         stats: JsonDict = {
             "entities": len(graph.entities),
@@ -214,25 +230,71 @@ class PortalBuilder:
             return {"page": page, "title": title, "stats": stats, "intelligence": intelligence}
         if page == "changes":
             return {"page": page, "title": title, "stats": stats, "changes": changes}
+        if page == "ask":
+            return {
+                "page": page,
+                "title": title,
+                "stats": stats,
+                "suggested_questions": list(FLAGSHIP_QUESTIONS),
+                "rag_status_url": "/api/rag/status",
+                "rag_query_url": "/api/rag/query",
+            }
+        if page == "trust":
+            levels = {"authoritative": 0, "evidence_backed": 0, "weak": 0}
+            for assertion in graph.assertions:
+                levels[_evidence_level(assertion)] += 1
+            covered = sum(
+                bool(assertion.source_path or assertion.evidence_text)
+                for assertion in graph.assertions
+            )
+            rejected = trust_data.get("rejected_assertions", 0)
+            return {
+                "page": page,
+                "title": title,
+                "stats": stats,
+                "trust": {
+                    "evidence_levels": levels,
+                    "warnings": graph.warnings,
+                    "source_coverage": {
+                        "covered": covered,
+                        "total": len(graph.assertions),
+                        "percent": round(100 * covered / len(graph.assertions), 1)
+                        if graph.assertions
+                        else 0,
+                    },
+                    "rejected_assertions": rejected,
+                    "quality": intel.build_quality(graph),
+                    "index_status": trust_data.get("index_status"),
+                    "rag_evaluation": trust_data.get("evaluation"),
+                },
+            }
 
-        layer_nodes = [n for n in nodes if n["graph_kind"] == layer]
-        layer_links = [link for link in links if link["graph_kind"] == layer]
-        limit = ranking.DATA_LIMIT if layer == "data" else ranking.REPO_LIMIT
-        per_type_cap = ranking.DATA_PER_TYPE_CAP if layer == "data" else None
-        shown_nodes, shown_links = ranking.prune_layer(
-            layer_nodes,
-            layer_links,
-            limit=limit,
-            per_type_cap=per_type_cap,
-            pinned_ids=pinned,
-            link_limit=ranking.LINK_LIMIT,
-        )
+        shown_nodes: list[JsonDict] = []
+        shown_links: list[JsonDict] = []
+        for graph_kind, limit, cap in (
+            ("repo", ranking.REPO_LIMIT, None),
+            ("data", ranking.DATA_LIMIT, ranking.DATA_PER_TYPE_CAP),
+        ):
+            kind_nodes = [n for n in nodes if n["graph_kind"] == graph_kind]
+            kind_links = [link for link in links if link["graph_kind"] == graph_kind]
+            selected_nodes, selected_links = ranking.prune_layer(
+                kind_nodes,
+                kind_links,
+                limit=limit,
+                per_type_cap=cap,
+                pinned_ids=pinned,
+                link_limit=ranking.LINK_LIMIT,
+            )
+            shown_nodes.extend(selected_nodes)
+            shown_links.extend(selected_links)
         stats.update(
             {
                 "shown_nodes": len(shown_nodes),
-                "total_nodes": len(layer_nodes),
+                "total_nodes": len(nodes),
                 "shown_links": len(shown_links),
-                "total_links": len(layer_links),
+                "total_links": len(links),
+                "repo_nodes": sum(1 for node in nodes if node["graph_kind"] == "repo"),
+                "data_nodes": sum(1 for node in nodes if node["graph_kind"] == "data"),
             }
         )
         return {
@@ -241,18 +303,14 @@ class PortalBuilder:
             "title": title,
             "nodes": shown_nodes,
             "links": shown_links,
-            "search_index": _search_index(layer_nodes),
+            "search_index": _search_index(nodes),
             "stats": stats,
             "full_graph_url": "graph.json",
         }
 
     # --------------------------------------------------------------- helpers
     def _graphify_artifacts(self, graphify_out: Path) -> list[JsonDict]:
-        # graph.html is graphify's full physics render — the "cool" one, but heavy on
-        # low-memory machines. It's only emitted when no_viz is false, so it's linked
-        # only when present; the portal's own Repo-graph tab stays the light everyday view.
         candidates = [
-            ("graph.html", "Interactive graph"),
             ("GRAPH_TREE.html", "Repository tree"),
             ("GRAPH_REPORT.md", "Full report"),
         ]
@@ -271,10 +329,13 @@ class PortalBuilder:
         return None
 
     def _nav(self, active: str) -> str:
-        tabs = [("data", "data-graph.html", "Data graph"),
-                ("repo", "repo.html", "Repo graph"),
-                ("intelligence", "intelligence.html", "Intelligence"),
-                ("changes", "changes.html", "Changes")]
+        tabs = [
+            ("ask", "ask.html", "Ask"),
+            ("explore", "explore.html", "Explore"),
+            ("intelligence", "intelligence.html", "Insights"),
+            ("changes", "changes.html", "Changes"),
+            ("trust", "trust.html", "Trust"),
+        ]
         parts = []
         for page, href, label in tabs:
             cls = ' class="active"' if page == active else ""
@@ -300,22 +361,26 @@ def _search_index(layer_nodes: list[JsonDict]) -> list[JsonDict]:
 
 
 _SUBTITLES = {
-    "data": "Structured-data entities and their relationships extracted from connected sources.",
-    "repo": "Evidence-first code & architecture ontology extracted from the repository.",
-    "intelligence": "Graphify graph intelligence — hotspots, surprising links and community cohesion.",
+    "ask": "Ask grounded questions across code, documents, and business data.",
+    "explore": "One evidence-first graph with architecture and business-data layers.",
+    "intelligence": (
+        "Graphify graph intelligence — hotspots, surprising links and community cohesion."
+    ),
     "changes": "What changed since the previous run — added, removed and modified graph elements.",
+    "trust": "Evidence coverage, data quality, freshness, and GraphRAG evaluation.",
 }
 
 
 def _redirect_page(title: str, target: str) -> str:
-    """Tiny landing page that forwards to the populated graph layer."""
+    """Tiny compatibility or landing page redirect."""
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         f"<title>{_esc(title)}</title>"
         f'<meta http-equiv="refresh" content="0; url={target}">'
         f"<script>location.replace({json.dumps(target)})</script></head>"
-        '<body style="font-family:system-ui,sans-serif;background:#0b1220;color:#cbd5e1;padding:2rem">'
-        f'Opening the ontology portal… <a style="color:#7dd3fc" href="{target}">open the graph</a> '
+        '<body style="font-family:system-ui,sans-serif;background:#0b1220;'
+        'color:#cbd5e1;padding:2rem">'
+        f'Opening Ontology Atlas… <a style="color:#7dd3fc" href="{target}">continue</a> '
         "if it doesn’t load automatically.</body></html>"
     )
 
@@ -323,6 +388,23 @@ def _redirect_page(title: str, target: str) -> str:
 def _json_for_script(payload: JsonDict) -> str:
     # Safe to embed inside <script type="application/json">; only </ needs neutralising.
     return json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
+
+
+def _load_json(path: Path) -> JsonDict | None:
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _line_count(path: Path) -> int:
+    try:
+        return sum(bool(line.strip()) for line in path.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return 0
 
 
 def _esc(value: str) -> str:

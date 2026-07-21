@@ -14,6 +14,7 @@ class RuntimeSettings:
     neo4j_password: str | None
     llm_api_key: str | None
     llm_model: str | None
+    embedding_model: str | None
 
 
 def runtime_settings(config: ProjectConfig) -> RuntimeSettings:
@@ -24,4 +25,5 @@ def runtime_settings(config: ProjectConfig) -> RuntimeSettings:
         neo4j_password=os.getenv(config.graph.password_env),
         llm_api_key=os.getenv(config.llm.api_key_env),
         llm_model=os.getenv(config.llm.model_env),
+        embedding_model=os.getenv(config.embedding.model_env),
     )

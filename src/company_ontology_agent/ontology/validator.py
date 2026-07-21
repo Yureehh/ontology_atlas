@@ -103,9 +103,12 @@ class OntologyValidator:
         return ValidationResult(graph=valid_graph, rejected=rejected)
 
     def _persist_rejections(self, rejected: list[ValidationIssue]) -> None:
+        output_dir = self.project_root / "data" / "processed" / "rejected"
         if not rejected:
+            (output_dir / "rejections.jsonl").unlink(missing_ok=True)
+            (output_dir / "summary.md").unlink(missing_ok=True)
             return
-        output = self.project_root / "data" / "processed" / "rejected" / "rejections.jsonl"
+        output = output_dir / "rejections.jsonl"
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8") as handle:
             for issue in rejected:

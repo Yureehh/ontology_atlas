@@ -12,7 +12,7 @@ dependencies = [
   "graphifyy[openai,neo4j,pdf]>=0.8.38,<0.9.0",
   "markdown-it-py>=3.0",
   "neo4j>=5.20",
-  "openai>=2.0",
+  "openai>=1.51.1,<2",
   "pydantic>=2.7",
   "pypdf>=4.2",
   "pyshacl>=0.26",
@@ -22,6 +22,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rag = [
+  "fastapi>=0.115,<1.0",
+  "neo4j-graphrag[openai]>=1.17,<2",
+  "uvicorn>=0.34,<1.0",
+]
 parquet = [
   "pyarrow>=16",
 ]

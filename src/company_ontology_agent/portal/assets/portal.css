@@ -138,6 +138,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
 input::placeholder { color: var(--faint); }
 button { cursor: pointer; flex: 1; white-space: nowrap; transition: border-color 0.15s, color 0.15s, background 0.15s; }
 button:hover { border-color: var(--accent); color: #bae6fd; }
+button:disabled { cursor: not-allowed; opacity: .52; }
 button.active { background: var(--accent-soft); border-color: rgba(56, 189, 248, 0.45); color: #bae6fd; }
 .ghost { color: var(--muted); }
 
@@ -189,6 +190,33 @@ button.active { background: var(--accent-soft); border-color: rgba(56, 189, 248,
 
 /* ---------- Intelligence dashboard ---------- */
 .intel-app { flex: 1; padding: 16px 26px 32px; display: flex; flex-direction: column; gap: 22px; }
+.answer-app { flex: 1; width: min(1180px, 100%); margin: 0 auto; padding: 28px 26px 42px; }
+.answer-hero { border: 1px solid var(--line); border-radius: 18px; padding: 28px; background: linear-gradient(135deg, rgba(56,189,248,.12), rgba(167,139,250,.06)), var(--panel); box-shadow: var(--shadow); }
+.answer-hero h2 { margin: 5px 0 8px; font-size: clamp(24px, 4vw, 38px); letter-spacing: -.03em; }
+.answer-hero > p { color: var(--muted); margin: 0 0 20px; }
+.eyebrow { color: #7dd3fc; font-size: 12px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.ask-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch; }
+.ask-form textarea { resize: vertical; min-height: 84px; width: 100%; font: inherit; border: 1px solid var(--line); border-radius: 10px; padding: 13px; color: var(--text); background: #0b1220; }
+.ask-form button { min-width: 170px; background: var(--accent-soft); border-color: rgba(56,189,248,.45); }
+.suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.suggestion { flex: 0 1 auto; color: var(--muted); font-size: 12px; }
+.status-card { margin-top: 14px; border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px; color: var(--muted); background: #0b1220; }
+.status-card.ready { color: #bbf7d0; border-color: rgba(52,211,153,.45); }
+.status-card.warn { color: #fde68a; border-color: rgba(251,191,36,.45); }
+.answer-result { margin-top: 18px; }
+.answer-card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 20px; }
+.answer-card h3 { margin: 5px 0 10px; }
+.answer-copy { white-space: pre-wrap; line-height: 1.65; }
+.answer-meta { color: var(--faint); font-size: 11.5px; }
+.answer-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 14px; margin-top: 14px; }
+.answer-grid h3 { margin-top: 0; }
+.answer-grid details { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+.answer-grid summary { cursor: pointer; color: #bae6fd; }
+.path-row { padding: 9px 0; border-top: 1px solid var(--line-soft); color: var(--muted); }
+.mini-edge { display: grid; grid-template-columns: minmax(90px, 1fr) auto minmax(90px, 1fr); align-items: center; gap: 9px; margin: 10px 0; }
+.mini-node { padding: 8px 10px; border: 1px solid rgba(125,211,252,.45); background: rgba(14,116,144,.16); border-radius: 999px; text-align: center; color: #e0f2fe; }
+.mini-rel { color: var(--muted); font-size: .78rem; text-align: center; }
+.metric-inline { font-size: 28px; font-weight: 700; }
 .intel-section h2 { margin: 0 0 4px; font-size: 16px; }
 .intel-section .lead { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
 .grid { display: grid; gap: 12px; }
@@ -222,4 +250,18 @@ button.active { background: var(--accent-soft); border-color: rgba(56, 189, 248,
   .rail { max-height: 320px; }
   #graph { min-height: 460px; }
   .topbar { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .ask-form, .answer-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .topbar { padding: 14px 16px; overflow: hidden; }
+  .tabs { width: 100%; overflow-x: auto; flex: 0 0 auto; }
+  .tabs a { padding: 7px 13px; }
+  .metrics { padding: 14px 16px 6px; }
+  .metric { min-width: 124px; }
+  .answer-app, .intel-app { padding: 18px 16px 30px; }
+  .answer-hero { padding: 18px; }
+  .suggestion { width: 100%; max-width: 100%; white-space: normal; text-align: left; }
+  .mini-edge { grid-template-columns: 1fr; }
+  .mini-rel { padding-left: 12px; text-align: left; }
 }

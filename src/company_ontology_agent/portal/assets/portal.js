@@ -17,6 +17,14 @@
     return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   }
+
+  function sourceWikiHref(path) {
+    const slug = String(path || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return slug ? `../wiki/sources/${slug}.html` : "#";
+  }
   function el(tag, attrs, text) {
     const node = document.createElement(tag);
     if (attrs) for (const key in attrs) node.setAttribute(key, attrs[key]);
@@ -63,6 +71,14 @@
     renderChanges(DATA.changes);
     return;
   }
+  if (DATA.page === "trust") {
+    renderTrust(DATA.trust);
+    return;
+  }
+  if (DATA.page === "ask") {
+    renderAsk(DATA);
+    return;
+  }
   document.getElementById("graph-app").hidden = false;
   startGraph(DATA);
 
@@ -81,6 +97,7 @@
     const searchInput = document.getElementById("search");
     const predicateSelect = document.getElementById("predicate");
     const datasetSelect = document.getElementById("dataset");
+    const layerSelect = document.getElementById("layer");
     const app = document.getElementById("graph-app");
 
     let selectedId = null;
@@ -96,7 +113,7 @@
     svg.appendChild(viewport);
 
     function displayType(node) {
-      return kind === "data"
+      return node.graph_kind === "data"
         ? node.mapped_type || node.type
         : node.visual_type || node.type;
     }
@@ -116,7 +133,7 @@
     fillSelect(predicateSelect, "All relationships",
       [...new Set(allLinks.map((l) => l.predicate).filter(Boolean))].sort());
     const datasets = [...new Set(allNodes.map((n) => n.dataset).filter(Boolean))].sort();
-    if (datasets.length && kind === "data") {
+    if (datasets.length) {
       fillSelect(datasetSelect, "All datasets", datasets);
     } else {
       datasetSelect.hidden = true;
@@ -126,7 +143,9 @@
       const query = searchInput.value.trim().toLowerCase();
       const predicate = predicateSelect.value;
       const dataset = datasetSelect.value;
+      const layer = layerSelect.value;
       let nodes = allNodes;
+      if (layer !== "all") nodes = nodes.filter((n) => n.graph_kind === layer);
       if (query) {
         nodes = nodes.filter((n) =>
           [n.name, n.type, n.mapped_type, n.domain, n.dataset, n.source_path, n.community]
@@ -597,8 +616,8 @@
       try {
         const resp = await fetch(data.full_graph_url, { cache: "no-store" });
         const full = await resp.json();
-        allNodes = (full.nodes || []).filter((n) => n.graph_kind === kind);
-        allLinks = (full.links || []).filter((l) => l.graph_kind === kind);
+        allNodes = full.nodes || [];
+        allLinks = full.links || [];
         nodeById = new Map(allNodes.map((n) => [n.id, n]));
         linkById = new Map(allLinks.map((l) => [l.id, l]));
         fullLoaded = true;
@@ -665,11 +684,16 @@
     document.getElementById("export-png").addEventListener("click", exportPng);
     predicateSelect.addEventListener("change", scheduleRelayout);
     datasetSelect.addEventListener("change", scheduleRelayout);
+    layerSelect.addEventListener("change", () => {
+      if (history.replaceState) history.replaceState(null, "", "#layer=" + layerSelect.value);
+      scheduleRelayout();
+    });
     document.getElementById("key-only").addEventListener("click", (e) => {
       keyOnly = !keyOnly; e.currentTarget.classList.toggle("active", keyOnly); scheduleRelayout();
     });
     document.getElementById("reset").addEventListener("click", () => {
       searchInput.value = ""; predicateSelect.value = ""; datasetSelect.value = "";
+      layerSelect.value = "all";
       keyOnly = false; document.getElementById("key-only").classList.remove("active");
       clearSelection(); fit(); scheduleRelayout();
     });
@@ -691,15 +715,157 @@
     });
 
     const hint = document.getElementById("hint");
-    hint.textContent = `Showing ${DATA.stats.shown_nodes} of ${DATA.stats.total_nodes} ${kind} nodes — ranked by importance. Search covers all ${DATA.stats.total_nodes}. Scroll to zoom, drag to pan.`;
+    hint.textContent = `Showing ${DATA.stats.shown_nodes} of ${DATA.stats.total_nodes} nodes across one canonical graph — ranked by importance. Search covers all ${DATA.stats.total_nodes}.`;
 
     // Deep-link support: #node=<id> focuses that node on load.
     function applyHash() {
+      const layerMatch = /[#&]layer=([^&]+)/.exec(window.location.hash);
+      if (layerMatch && ["all", "repo", "data"].includes(layerMatch[1])) {
+        layerSelect.value = layerMatch[1];
+        relayout();
+      }
       const match = /[#&]node=([^&]+)/.exec(window.location.hash);
       if (match) focusEntity(decodeURIComponent(match[1]), null);
     }
 
     requestAnimationFrame(() => { relayout(); renderLegend(); applyHash(); });
+  }
+
+  // ---------- answer-first GraphRAG ----------
+  function renderAsk(data) {
+    const host = document.getElementById("answer-app");
+    host.hidden = false;
+    host.innerHTML = `
+      <div class="answer-hero">
+        <div class="eyebrow">Neo4j GraphRAG</div>
+        <h2>Ask your enterprise knowledge</h2>
+        <p>Answers combine semantic retrieval, bounded graph traversal, and source evidence.</p>
+        <form id="ask-form" class="ask-form">
+          <textarea id="question" rows="3" placeholder="Ask about dependencies, evidence, ownership, or impact…"></textarea>
+          <button id="ask-submit" type="submit">Ask Ontology Atlas</button>
+        </form>
+        <div class="suggestions">${(data.suggested_questions || []).map((q) =>
+          `<button type="button" class="suggestion" data-question="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+        <div id="rag-status" class="status-card">Checking GraphRAG readiness…</div>
+      </div>
+      <div id="answer-result" class="answer-result" hidden></div>`;
+
+    const status = document.getElementById("rag-status");
+    const form = document.getElementById("ask-form");
+    const question = document.getElementById("question");
+    const submit = document.getElementById("ask-submit");
+    const result = document.getElementById("answer-result");
+
+    async function refreshStatus() {
+      if (window.location.protocol === "file:") {
+        status.className = "status-card warn";
+        status.innerHTML = 'Live answers require <code>ontology-agent portal serve</code>. <a href="explore.html">Explore the graph offline →</a>';
+        submit.disabled = true;
+        return;
+      }
+      try {
+        const response = await fetch(data.rag_status_url, { cache: "no-store" });
+        const payload = await response.json();
+        const ready = Boolean(payload.ready);
+        status.className = `status-card ${ready ? "ready" : "warn"}`;
+        status.textContent = ready
+          ? `Ready · ${Number(payload.chunk_count || 0).toLocaleString()} indexed knowledge chunks`
+          : (payload.message || "GraphRAG is not indexed yet. Run ontology-agent rag index.");
+        submit.disabled = !ready;
+      } catch (error) {
+        status.className = "status-card warn";
+        status.textContent = "GraphRAG service is unavailable. Serve the portal from the project directory.";
+        submit.disabled = true;
+      }
+    }
+
+    function renderAnswer(payload) {
+      const citations = payload.citations || payload.supporting_chunks || [];
+      const paths = payload.paths || [];
+      const neighborhood = paths.map((path) => {
+        const summary = Array.isArray(path) ? path.join(" → ") : path.summary || String(path);
+        const match = /^(.*?) -\[(.*?)\]-> (.*)$/.exec(summary);
+        return match
+          ? `<div class="mini-edge"><span class="mini-node">${esc(match[1])}</span><span class="mini-rel">${esc(match[2])} →</span><span class="mini-node">${esc(match[3])}</span></div>`
+          : `<div class="path-row">${esc(summary)}</div>`;
+      }).join("");
+      result.hidden = false;
+      result.innerHTML = `
+        <article class="answer-card">
+          <div class="answer-meta">Trace ${esc(payload.trace_id || "unknown")}</div>
+          <h3>Grounded answer</h3>
+          <div class="answer-copy">${esc(payload.answer || "No answer returned.")}</div>
+          ${(payload.warnings || []).map((w) => `<div class="note">${esc(w)}</div>`).join("")}
+        </article>
+        <section class="answer-grid">
+          <article class="card"><h3>Evidence</h3>${citations.length ? citations.map((c, i) => `
+            <details ${i === 0 ? "open" : ""}><summary><a href="${sourceWikiHref(c.source_path || c.path)}">${esc(c.source_path || c.path || `Source ${i + 1}`)}</a></summary>
+            <p class="evidence">${esc(c.evidence || c.text || "")}</p>
+            <div class="answer-meta">${esc(c.evidence_level || "evidence_backed")}${c.score != null ? ` · score ${Number(c.score).toFixed(3)}` : ""}</div></details>`).join("") : '<p class="placeholder">No supporting evidence was retrieved.</p>'}</article>
+          <article class="card"><h3>Answer neighborhood</h3>${neighborhood || '<p class="placeholder">No relationship path was returned.</p>'}</article>
+        </section>`;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const value = question.value.trim();
+      if (!value) return;
+      submit.disabled = true;
+      submit.textContent = "Retrieving evidence…";
+      result.hidden = false;
+      result.innerHTML = '<div class="status-card">Searching the graph and its source evidence…</div>';
+      try {
+        const response = await fetch(data.rag_query_url, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: value }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "GraphRAG query failed.");
+        renderAnswer(payload);
+      } catch (error) {
+        result.innerHTML = `<div class="status-card warn">${esc(error.message || error)}</div>`;
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "Ask Ontology Atlas";
+      }
+    });
+    document.querySelectorAll(".suggestion").forEach((button) => {
+      button.addEventListener("click", () => {
+        question.value = button.dataset.question || "";
+        question.focus();
+      });
+    });
+    refreshStatus();
+  }
+
+  function renderTrust(trust) {
+    const host = document.getElementById("intel-app");
+    host.hidden = false;
+    const levels = (trust && trust.evidence_levels) || {};
+    const coverage = (trust && trust.source_coverage) || {};
+    const quality = trust && trust.quality;
+    const indexStatus = trust && trust.index_status;
+    const evaluation = trust && trust.rag_evaluation;
+    const artifacts = DATA.artifacts || [];
+    host.innerHTML = `
+      <section class="intel-section"><h2>Evidence coverage</h2><p class="lead">Trust is explicit: authoritative facts, evidence-backed extraction, and weak claims remain distinguishable.</p>
+        <div class="grid cols-3">
+          <div class="card"><div class="card-title">Authoritative</div><div class="metric-inline">${Number(levels.authoritative || 0).toLocaleString()}</div></div>
+          <div class="card"><div class="card-title">Evidence-backed</div><div class="metric-inline">${Number(levels.evidence_backed || 0).toLocaleString()}</div></div>
+          <div class="card"><div class="card-title">Weak / review</div><div class="metric-inline">${Number(levels.weak || 0).toLocaleString()}</div></div>
+          <div class="card"><div class="card-title">Source coverage</div><div class="metric-inline">${Number(coverage.percent || 0).toFixed(1)}%</div><div class="card-sub">${Number(coverage.covered || 0)} of ${Number(coverage.total || 0)} relationships</div></div>
+          <div class="card"><div class="card-title">Rejected assertions</div><div class="metric-inline">${Number(trust && trust.rejected_assertions || 0)}</div></div>
+          <div class="card"><div class="card-title">Index freshness</div><div class="card-sub">${indexStatus ? esc(indexStatus.indexed_at) : "Not indexed"}</div>${indexStatus ? `<div class="answer-meta">${Number(indexStatus.total || 0)} chunks · ${esc(indexStatus.embedding_model || "unknown model")}</div>` : ""}</div>
+        </div></section>
+      ${quality ? `<section class="intel-section"><h2>Structural quality</h2><p class="lead">Relationship hygiene is measured separately from answer quality.</p><div class="grid cols-3">
+        <div class="card"><div class="card-title">Relationships</div><div class="metric-inline">${Number(quality.total_relationships || 0).toLocaleString()}</div></div>
+        <div class="card"><div class="card-title">Duplicate edges</div><div class="metric-inline">${Number(quality.duplicate_edges || 0)}</div></div>
+        <div class="card"><div class="card-title">Self-loops</div><div class="metric-inline">${Number(quality.self_loops || 0)}</div></div>
+      </div></section>` : ""}
+      <section class="intel-section"><h2>GraphRAG evaluation</h2><p class="lead">Golden questions verify retrieval, citation validity, and correct refusal.</p>
+        ${evaluation ? `<div class="card"><pre>${esc(JSON.stringify(evaluation, null, 2))}</pre></div>` : '<div class="empty-state">No evaluation has been run yet. Use <code>ontology-agent rag evaluate</code>.</div>'}
+      </section>
+      ${artifacts.length ? `<section class="intel-section"><h2>Diagnostics and evidence</h2><p class="lead">Secondary Graphify artifacts for technical investigation.</p><div class="grid cols-3">${artifacts.map((a) => `<div class="card"><div class="card-title">${link(a.url, a.label)}</div></div>`).join("")}</div></section>` : ""}`;
   }
 
   // ---------- intelligence dashboard ----------
@@ -780,23 +946,6 @@
         </div>`);
     }
 
-    const q = intel.quality;
-    if (q) {
-      const badgeTone = q.clean ? "good" : "warn";
-      sections.push(`
-        <div class="intel-section">
-          <h2>Data quality</h2>
-          <p class="lead">Structural health of the extracted relationships.</p>
-          <div class="grid cols-3">
-            <div class="card"><div class="card-title">Relationships</div><div class="card-sub">${q.total_relationships.toLocaleString("en-US")}</div></div>
-            <div class="card"><div class="card-title">Duplicate edges</div><div class="card-sub"><span class="badge ${q.duplicate_edges ? "warn" : "good"}">${q.duplicate_edges}</span></div></div>
-            <div class="card"><div class="card-title">Self-loops</div><div class="card-sub"><span class="badge ${q.self_loops ? "warn" : "good"}">${q.self_loops}</span></div></div>
-            <div class="card"><div class="card-title">Multi-edge pairs</div><div class="card-sub">${q.multi_edge_pairs}</div></div>
-            <div class="card"><div class="card-title">Overall</div><div class="card-sub"><span class="badge ${badgeTone}">${q.clean ? "clean" : "review"}</span></div></div>
-          </div>
-        </div>`);
-    }
-
     const maxSize = Math.max(1, ...intel.communities.map((c) => c.size));
     sections.push(`
       <div class="intel-section">
@@ -813,17 +962,6 @@
         </div>
       </div>`);
 
-    const artifacts = DATA.artifacts || [];
-    if (artifacts.length) {
-      sections.push(`
-        <div class="intel-section">
-          <h2>Explore artifacts</h2>
-          <p class="lead">Graphify's own visualisations — useful, high-fidelity companions to this portal.</p>
-          <div class="grid cols-3">
-            ${artifacts.map((a) => `<div class="card"><div class="card-title">${link(a.url, a.label)}</div></div>`).join("")}
-          </div>
-        </div>`);
-    }
     host.innerHTML = sections.join("");
   }
 

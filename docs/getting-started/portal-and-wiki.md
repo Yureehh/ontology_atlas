@@ -1,90 +1,59 @@
-# Portal And Wiki
+# Portal and Wiki
 
 The generated project has two human-facing outputs:
 
-- `wiki/`: reviewable markdown knowledge base.
-- `portal/`: local static demo surface for graph, wiki, and Graphify artifacts.
+- `portal/`: the answer-first client demo.
+- `wiki/`: reviewable markdown context and provenance.
 
-Both are generated from graph state. Do not manually treat either one as canonical truth.
+Both are generated from canonical graph state; neither should be edited as source truth.
 
-## Build
-
-From a generated project:
+## Offline review
 
 ```bash
-make check
-```
-
-This builds the local dry-run graph, wiki, and portal without Neo4j. Build only the
-portal from the dry-run graph with:
-
-```bash
-make portal
+ontology-agent run --dry-run
 ontology-agent portal build --dry-run
 ```
 
-Serve it locally:
+Open `portal/index.html`. Ask will explain that live answers are unavailable, while Explore,
+Insights, Changes, and Trust remain useful offline.
+
+## Live cited answers
 
 ```bash
-make view
+ontology-agent run --neo4j
+ontology-agent rag index
+ontology-agent portal build --neo4j
 ontology-agent portal serve --port 8765
 ```
 
-Then open:
+Open `http://127.0.0.1:8765/portal/index.html`.
 
-```text
-http://localhost:8765/portal/index.html
+The navigation is **Ask, Explore, Insights, Changes, Trust**. Explore is a single graph with
+All, Architecture, and Business data filters. The old `repo.html` and `data-graph.html` URLs
+redirect to those filters for compatibility.
+
+Structured connector facts are authoritative. Graphify/OpenAI claims retain evidence text,
+source path, confidence, and extractor. Ask carries those distinctions into citations and
+refuses when retrieval finds no support.
+
+`GRAPH_TREE.html` and `GRAPH_REPORT.md` appear only under Trust diagnostics. Graphify's
+standalone `graph.html` is disabled and is not part of the shareable output.
+
+## Trust and evaluation
+
+Customize the generated `rag/questions.yaml`, then run:
+
+```bash
+ontology-agent rag evaluate
+ontology-agent portal build --neo4j
 ```
 
-## Portal Contents
+Trust will show graph quality, source coverage, rejected assertions, vector-index freshness,
+stale cleanup counts, and the evaluation report.
 
-The portal is generated pages that share one renderer, differing only by the graph data
-injected into each:
+## Wiki contents
 
-- `portal/index.html`: a lightweight redirect that opens whichever layer has content —
-  the repo graph for code/knowledge projects, the data graph for structured-connector ones,
-- `portal/repo.html`: the repo/code ontology graph,
-- `portal/data-graph.html`: the structured-connector data graph,
-- `portal/intelligence.html`: a Graphify dashboard (hotspots, surprising links, community cohesion),
-- `portal/changes.html`: what changed since the previous run,
-- `portal/graph.json`: the complete graph for download (each page inlines only a bounded,
-  ranked subset so the HTML stays small and opens offline),
-- sidebar links to `GRAPH_TREE.html` and `GRAPH_REPORT.md` (Graphify's own artifacts).
-
-The portal deliberately does **not** embed or link Graphify's standalone `graph.html`: that
-file runs a physics simulation that freezes on large graphs. It remains a separate Graphify
-artifact — a pretty standalone view for small graphs, opened on its own. The portal's graph uses
-a static layout (no physics), a ranked node cap, and full-corpus search, so it scales.
-
-This prevents large business datasets from hiding the repository architecture. The
-portal keeps the complete graph in `portal/graph.json`, but each layer initially shows
-only a ranked subset. Use `Show all`, search, domain/dataset filters, relationship
-filters, or double-click a node to expand its neighborhood.
-
-The portal does not present semantic extraction as certain truth. Structured connector
-relationships are labelled as authoritative, while Graphify/OpenAI relationships expose
-their confidence tier, evidence text, source path, and extractor. Dashed relationships
-indicate inferred semantic edges that should be reviewed against the cited source.
-
-Neo4j is not required for this path. If Neo4j is unavailable or its Explore view is
-showing only provenance dots, use the portal and Graphify artifacts for the visual demo.
-
-## Wiki Contents
-
-The wiki is not a flat entity dump. The V1 exporter writes:
-
-- `index.md`: entrypoint and top graph sections,
-- `architecture.md`: backend/frontend/data/deployment view,
-- `data-model.md`: models, databases, and stores,
-- `deployment.md`: deployment/config/environment nodes,
-- `graph-rag.md`: retrieval and reasoning readiness,
-- `manager-demo.md`: suggested demo flow,
-- `modules/*.md`: module/community pages,
-- `apis/*.md`: endpoint pages,
-- `entities/*.md`: entity pages with incoming/outgoing relationships and evidence,
-- `sources/*.md`: provenance pages.
-
-## Commit Policy
-
-Commit `wiki/**/*.md` when the output is useful for review. Treat `portal/` as rebuildable
-unless a specific demo snapshot needs to be preserved.
+The exporter writes architecture, data model, deployment, GraphRAG, module, API, entity, and
+source pages. Entity pages expose incoming/outgoing relationships and evidence; source pages
+preserve provenance. Commit useful `wiki/**/*.md` output for review. Treat `portal/` and saved
+index/evaluation status as rebuildable demo artifacts.

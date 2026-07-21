@@ -33,7 +33,7 @@ class GraphifyConfig(BaseModel):
     backend: str = "openai"
     mode: Literal["default", "deep"] = "deep"
     update: bool = True
-    no_viz: bool = False
+    no_viz: bool = True
     strict: bool = False
     timeout_seconds: int | None = None
     auto_name_communities: bool = True
@@ -50,6 +50,12 @@ class EmbeddingConfig(BaseModel):
     provider: str = "none"
     model_env: str = "ONTOLOGY_AGENT_EMBEDDING_MODEL"
     dimension: int = 1536
+
+
+class RagConfig(BaseModel):
+    enabled: bool = False
+    top_k: int = Field(default=8, ge=1, le=50)
+    max_hops: int = Field(default=2, ge=1, le=3)
 
 
 class ExtractionConfig(BaseModel):
@@ -106,6 +112,7 @@ class ProjectConfig(BaseModel):
     graphify: GraphifyConfig = Field(default_factory=GraphifyConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    rag: RagConfig = Field(default_factory=RagConfig)
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     ontology: OntologyConfig = Field(default_factory=OntologyConfig)
     wiki: WikiConfig = Field(default_factory=WikiConfig)

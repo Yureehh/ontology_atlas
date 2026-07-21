@@ -189,8 +189,8 @@ for every generated Make target.
 ontology-agent portal serve --port 8765
 ```
 
-Then open `http://127.0.0.1:8765/portal/index.html` to explore the data graph, repo graph,
-and Graphify intelligence dashboard.
+Then open `http://127.0.0.1:8765/portal/index.html` to use Ask, Explore, Insights,
+Changes, and Trust. For live answers, publish to Neo4j and run `ontology-agent rag index` first.
 
 ## Clean Wheel Smoke Test
 

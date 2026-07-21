@@ -21,6 +21,11 @@
     <aside class="rail" id="left-rail">
       <h3>Filters</h3>
       <div class="control">
+        <select id="layer" aria-label="Filter by knowledge layer">
+          <option value="all">All knowledge</option>
+          <option value="repo">Architecture</option>
+          <option value="data">Business data</option>
+        </select>
         <input id="search" placeholder="Search every entity by name, type, source…" autocomplete="off">
         <div id="search-results" class="search-results" hidden></div>
         <select id="predicate" aria-label="Filter by relationship"></select>
@@ -66,6 +71,7 @@
   </main>
 
   <section class="intel-app" id="intel-app" hidden></section>
+  <section class="answer-app" id="answer-app" hidden></section>
 
   <script type="application/json" id="portal-data">__BOOTSTRAP_JSON__</script>
   <script>__JS__</script>

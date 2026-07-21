@@ -181,9 +181,7 @@ def test_graphify_failure_uses_existing_graph_artifact(
     assert result.graph_json_path == output / "graph.json"
     assert len(result.graph.entities) == 3
     assert len(result.graph.assertions) == 2
-    assert result.graph.warnings == [
-        "Graphify execution failed; see graphify-out/GRAPH_REPORT.md."
-    ]
+    assert result.graph.warnings == ["Graphify execution failed; see graphify-out/GRAPH_REPORT.md."]
 
 
 def test_openai_provider_payload_path_is_schema_compatible(tmp_path: Path) -> None:
@@ -239,6 +237,28 @@ def test_validation_rejects_invalid_predicate(tmp_path: Path) -> None:
     )
     assert "predicate" in rejection_text
     assert (project / "data/processed/rejected/summary.md").exists()
+
+
+def test_validation_removes_stale_rejection_outputs(tmp_path: Path) -> None:
+    project = scaffold_project(
+        tmp_path / "acme-poc",
+        "acme-poc",
+        with_docker=False,
+        with_markdown_wiki=True,
+        force=False,
+    )
+    validator = OntologyValidator(project)
+    validator.validate(
+        parse_graphify_graph(
+            Path("tests/fixtures/ontology/invalid_predicate_graph.json"), "acme-poc"
+        )
+    )
+
+    validator.validate(parse_graphify_graph(Path("tests/fixtures/graphify/graph.json"), "acme-poc"))
+
+    rejected = project / "data/processed/rejected"
+    assert not (rejected / "rejections.jsonl").exists()
+    assert not (rejected / "summary.md").exists()
 
 
 def test_wiki_export_includes_relationships_and_summary(tmp_path: Path) -> None:

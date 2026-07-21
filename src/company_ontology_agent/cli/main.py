@@ -15,6 +15,7 @@ from company_ontology_agent.cli.commands_graph import (
 from company_ontology_agent.cli.commands_ingest import ingest as ingest_command
 from company_ontology_agent.cli.commands_init import init_project
 from company_ontology_agent.cli.commands_portal import portal_app
+from company_ontology_agent.cli.commands_rag import rag_app
 from company_ontology_agent.cli.commands_wiki import export_wiki as export_wiki_command
 from company_ontology_agent.config.project_config import (
     ProjectConfig,
@@ -34,6 +35,8 @@ from company_ontology_agent.graph.visuals import summarize_visual_graph
 from company_ontology_agent.ingestion.folder import ingest_folder
 from company_ontology_agent.ingestion.raw_import import SourceProfile, import_raw_files
 from company_ontology_agent.portal.builder import PortalBuilder
+from company_ontology_agent.retrieval.questions import FLAGSHIP_QUESTIONS
+from company_ontology_agent.retrieval.runtime import ask_project, index_project
 from company_ontology_agent.structured.models import PruneMode
 from company_ontology_agent.wiki.exporter import WikiExporter
 from company_ontology_agent.workflows.build_graph import (
@@ -46,6 +49,7 @@ app.add_typer(graph_app, name="graph")
 app.add_typer(graphify_app, name="graphify")
 app.add_typer(portal_app, name="portal")
 app.add_typer(data_app, name="data")
+app.add_typer(rag_app, name="rag")
 
 
 @app.command("init")
@@ -128,14 +132,20 @@ def demo(dry_run: bool = typer.Option(False, "--dry-run")) -> None:
     root = find_project_root()
     config = load_project_config(root)
     typer.echo("== Manager demo build ==")
-    typer.echo("[1/5] Dry-run validation")
+    typer.echo("[1/6] Dry-run validation")
     _run_pipeline(dry_run=True, export_wiki=True, prune="none")
     if dry_run:
-        typer.echo("[2/5] Neo4j publish skipped (--dry-run)")
+        typer.echo("[2/6] Neo4j publish skipped (--dry-run)")
     else:
-        typer.echo("[2/5] Neo4j publish")
+        typer.echo("[2/6] Neo4j publish")
         _run_pipeline(dry_run=False, export_wiki=True, prune="none")
-    typer.echo("[3/5] Building portal")
+    if not dry_run and config.rag.enabled:
+        typer.echo("[3/6] Indexing GraphRAG knowledge")
+        index_project(root)
+    else:
+        reason = "--dry-run" if dry_run else "rag.enabled is false"
+        typer.echo(f"[3/6] GraphRAG indexing skipped ({reason})")
+    typer.echo("[4/6] Building portal")
     graph = repository_for(root, config, dry_run=dry_run).read_graph(config.project_slug)
     portal_files = PortalBuilder().build(
         graph,
@@ -144,10 +154,15 @@ def demo(dry_run: bool = typer.Option(False, "--dry-run")) -> None:
         display_name=config.project_name,
     )
     typer.echo(f"Built portal files: {len(portal_files)}")
-    typer.echo("[4/5] Demo queries")
-    typer.echo(f"Neo4j guide: {root / 'NEO4J_EXPLORE_GUIDE.md'}")
-    typer.echo(f"Cypher queries: {root / 'graph' / 'explore.cypher'}")
-    typer.echo("[5/5] Outputs")
+    typer.echo("[5/6] Flagship questions")
+    if not dry_run and config.rag.enabled:
+        for question in FLAGSHIP_QUESTIONS:
+            answer = ask_project(root, question)
+            typer.echo(f"Q: {question}\nA: {answer.answer}")
+    else:
+        for question in FLAGSHIP_QUESTIONS:
+            typer.echo(f"- {question}")
+    typer.echo("[6/6] Outputs")
     typer.echo(f"Portal: {root / 'portal' / 'index.html'}")
     typer.echo(f"Wiki: {root / config.wiki.output_path / 'index.md'}")
     typer.echo(f"Graphify report: {root / config.graphify.output_path / 'GRAPH_REPORT.md'}")

@@ -75,6 +75,23 @@ llm:
 
 Use `provider: openai` with `OPENAI_API_KEY` and `ONTOLOGY_AGENT_LLM_MODEL` for structured extraction. Use `provider: local` for deterministic fallback extraction.
 
+## Embedding and GraphRAG
+
+```yaml
+embedding:
+  provider: openai
+  model_env: ONTOLOGY_AGENT_EMBEDDING_MODEL
+  dimension: 1536
+rag:
+  enabled: true
+  top_k: 8
+  max_hops: 2
+```
+
+`top_k` controls semantic candidates. `max_hops` controls the fixed graph neighborhood and
+is capped at three. The model output dimension must match `embedding.dimension`. GraphRAG v1
+requires OpenAI plus the optional `rag` package extra.
+
 ## Ontology
 
 ```yaml

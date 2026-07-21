@@ -1,17 +1,16 @@
-# Company Ontology Agent
+# Ontology Atlas
 
-Company Ontology Agent is a reusable internal asset for creating one ontology instance per project or PoC.
+Ontology Atlas is a reusable enterprise knowledge and impact-analysis accelerator.
 
-It ingests project artifacts, runs Graphify/OpenAI extraction, projects the result into
-a curated ontology, writes a canonical Neo4j graph, and generates a readable wiki plus
-a local demo portal.
+It turns code, documents, and business data into cited answers, explorable impact paths,
+and measurable trust over one canonical Neo4j graph.
 
 ## Product Intent
 
-The ontology engine is the product. Everything else is an adapter.
+Trusted answers are the product promise. The ontology engine remains the reusable core.
 
 ```text
-CLI (current)  ·  FastAPI / Workers / Hosted (future adapters)
+CLI + local read-only API  ·  Hosted adapters (future)
         |
         v
 Core ontology engine
@@ -52,7 +51,7 @@ when preparing the manager-facing portal and Neo4j exploration pack.
 - [Pipeline](architecture/pipeline.md): source-to-wiki flow.
 - [Portal](architecture/portal.md): the portal pages, ranking, search, and exports.
 - [Graph Intelligence](architecture/graph-intelligence.md): hotspots, refactor candidates, questions, quality.
-- [GraphRAG Readiness](architecture/graph-rag.md): retrieval shape and how to enable semantic search.
+- [Neo4j GraphRAG](architecture/graph-rag.md): indexing, retrieval, trust, and safety.
 - [CLI Reference](reference/cli.md): command contract.
 - [Generated Project](reference/generated-project.md): generated folders and Make targets.
 - [Structured Data](reference/structured-data.md): connector and mapping reference.

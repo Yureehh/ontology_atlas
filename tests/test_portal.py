@@ -66,30 +66,39 @@ def test_portal_emits_all_pages_and_full_graph(tmp_path: Path) -> None:
     names = {path.name for path in files}
     assert {
         "index.html",
+        "ask.html",
+        "explore.html",
         "data-graph.html",
         "repo.html",
         "intelligence.html",
         "changes.html",
+        "trust.html",
         "graph.json",
     } <= names
     assert (tmp_path / "portal" / "index.html").exists()
 
 
-def test_index_redirects_to_populated_layer(tmp_path: Path) -> None:
-    # The sample graph is data-heavy (400 data nodes vs 2 repo), so the landing page
-    # should forward to the data layer, not sit on an empty tab.
+def test_index_redirects_to_answer_first_page(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
     index = (tmp_path / "portal" / "index.html").read_text(encoding="utf-8")
-    assert "data-graph.html" in index
+    assert "ask.html" in index
     assert 'id="portal-data"' not in index  # it's a redirect, not a full page
+
+
+def test_legacy_graph_pages_redirect_to_explore_layers(tmp_path: Path) -> None:
+    PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
+    repo = (tmp_path / "portal" / "repo.html").read_text(encoding="utf-8")
+    data = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
+    assert "explore.html#layer=repo" in repo
+    assert "explore.html#layer=data" in data
 
 
 def test_search_index_covers_every_layer_entity(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
-    data_page = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
-    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', data_page, re.S).group(1))
-    # Search must reach all 400 data entities even though only a ranked subset is plotted.
-    assert len(payload["search_index"]) == 400
+    explore_page = (tmp_path / "portal" / "explore.html").read_text(encoding="utf-8")
+    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', explore_page, re.S).group(1))
+    # Search reaches both layers even though only ranked subsets are plotted.
+    assert len(payload["search_index"]) == 402
     assert len(payload["nodes"]) < len(payload["search_index"])
 
 
@@ -99,6 +108,41 @@ def test_changes_page_shows_empty_state_without_baseline(tmp_path: Path) -> None
     payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', changes_html, re.S).group(1))
     assert payload["page"] == "changes"
     assert payload["changes"]["has_baseline"] is False
+
+
+def test_trust_page_loads_quality_index_and_evaluation_metrics(tmp_path: Path) -> None:
+    rag = tmp_path / "rag"
+    rag.mkdir()
+    (rag / "index-status.json").write_text(
+        json.dumps(
+            {
+                "indexed_at": "2026-07-21T10:00:00Z",
+                "embedding_model": "text-embedding-3-small",
+                "indexed": 2,
+                "unchanged": 0,
+                "deleted": 1,
+                "total": 2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (rag / "evaluation.json").write_text(
+        json.dumps({"total": 3, "passed": 3, "citation_validity": 1.0}),
+        encoding="utf-8",
+    )
+    rejected = tmp_path / "data" / "processed" / "rejected"
+    rejected.mkdir(parents=True)
+    (rejected / "rejections.jsonl").write_text("{}\n{}\n", encoding="utf-8")
+
+    PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
+    trust_html = (tmp_path / "portal" / "trust.html").read_text(encoding="utf-8")
+    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', trust_html, re.S).group(1))
+    trust = payload["trust"]
+    assert trust["quality"]["total_relationships"] == 401
+    assert trust["index_status"]["deleted"] == 1
+    assert trust["rag_evaluation"]["passed"] == 3
+    assert trust["source_coverage"]["total"] == 401
+    assert trust["rejected_assertions"] == 2
 
 
 def test_changes_page_reports_diff_against_baseline(tmp_path: Path) -> None:
@@ -120,14 +164,14 @@ def test_changes_page_reports_diff_against_baseline(tmp_path: Path) -> None:
 
 def test_inline_payload_is_bounded(tmp_path: Path) -> None:
     PortalBuilder().build(_sample_graph(), tmp_path, tmp_path / "portal")
-    data_page = (tmp_path / "portal" / "data-graph.html").read_text(encoding="utf-8")
-    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', data_page, re.S).group(1))
+    explore_page = (tmp_path / "portal" / "explore.html").read_text(encoding="utf-8")
+    payload = json.loads(re.search(r'id="portal-data">(.*?)</script>', explore_page, re.S).group(1))
     # 400 prediction rows must be pruned to the per-type cap, not inlined wholesale.
-    assert len(payload["nodes"]) <= ranking.DATA_LIMIT
-    assert payload["stats"]["total_nodes"] == 400  # data layer only
-    assert payload["page"] == "data" and payload["kind"] == "data"
+    assert len(payload["nodes"]) <= ranking.DATA_LIMIT + ranking.REPO_LIMIT
+    assert payload["stats"]["total_nodes"] == 402
+    assert payload["page"] == "explore" and payload["kind"] == "all"
     # The whole page stays small enough to open offline.
-    assert len(data_page.encode("utf-8")) < 1_000_000
+    assert len(explore_page.encode("utf-8")) < 1_000_000
 
 
 def test_prune_layer_caps_links() -> None:

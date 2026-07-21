@@ -125,7 +125,7 @@ def key_relationship_endpoint_ids(graph: ExtractedGraph) -> frozenset[str]:
     """Entity ids touched by the wiki's curated key relationships."""
     ids: set[str] = set()
     for items in key_relationship_sections(graph).values():
-        for assertion, subject, object_ in items:
+        for _assertion, subject, object_ in items:
             ids.add(subject.id)
             ids.add(object_.id)
     return frozenset(ids)

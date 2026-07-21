@@ -109,7 +109,7 @@ def graph_verify_visuals(dry_run: bool = typer.Option(True, "--dry-run/--neo4j")
             "or `ontology-agent run --neo4j` before opening the graph."
         )
         raise typer.Exit(code=1)
-    typer.echo(f"Portal: {root / 'portal' / 'data-graph.html'}")
+    typer.echo(f"Portal: {root / 'portal' / 'explore.html'}")
     typer.echo(f"Neo4j queries: {root / 'graph' / 'explore.cypher'}")
 
 

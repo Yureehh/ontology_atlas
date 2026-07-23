@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from itertools import batched
 from pathlib import Path
 from typing import Protocol
 
@@ -26,6 +28,8 @@ class JsonGraphRepository:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.prev_path = path.with_name("graph.prev.json")
+        self.fingerprint_path = path.with_name("scope-fingerprint.json")
+        self.prev_fingerprint_path = path.with_name("scope-fingerprint.prev.json")
 
     def bootstrap(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,6 +46,10 @@ class JsonGraphRepository:
             text = self.path.read_text(encoding="utf-8").strip()
             if text and text != "{}":
                 self.prev_path.write_text(text, encoding="utf-8")
+                if self.fingerprint_path.exists():
+                    self.prev_fingerprint_path.write_text(
+                        self.fingerprint_path.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
 
     def read_previous(self, project_slug: str) -> ExtractedGraph | None:
         """Return the previous run's graph, or None when there is no baseline yet."""
@@ -98,44 +106,56 @@ class Neo4jGraphRepository:
             """,
             {"slug": graph.project_slug, "seen_at": seen_at},
         )
-        for source in graph.sources:
-            self.client.execute(
-                """
-                MERGE (s:Source {id: $id})
-                SET s += $props
-                WITH s
-                MATCH (p:Project {slug: $project_slug})
-                MERGE (p)-[:HAS_SOURCE]->(s)
-                """,
-                {"id": source.id, "props": source.model_dump(), "project_slug": graph.project_slug},
-            )
-        for span in graph.source_spans:
-            self.client.execute(
-                """
-                MERGE (ss:SourceSpan {id: $id})
-                SET ss += $props
-                WITH ss
-                MATCH (s:Source {id: $source_id})
-                MERGE (s)-[:HAS_SPAN]->(ss)
-                """,
-                {"id": span.id, "props": span.model_dump(), "source_id": span.source_id},
-            )
-        for chunk in graph.chunks:
-            self.client.execute(
-                """
-                MERGE (c:Chunk {id: $id})
-                SET c += $props
-                WITH c
-                MATCH (ss:SourceSpan {id: $span_id})
-                MERGE (c)-[:DERIVED_FROM]->(ss)
-                """,
-                {"id": chunk.id, "props": chunk.model_dump(), "span_id": chunk.source_span_id},
-            )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (s:Source {id: row.id})
+            SET s += row.props
+            WITH s
+            MATCH (p:Project {slug: $project_slug})
+            MERGE (p)-[:HAS_SOURCE]->(s)
+            """,
+            [{"id": source.id, "props": source.model_dump()} for source in graph.sources],
+            project_slug=graph.project_slug,
+        )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (ss:SourceSpan {id: row.id})
+            SET ss += row.props
+            WITH ss, row
+            MATCH (s:Source {id: row.source_id})
+            MERGE (s)-[:HAS_SPAN]->(ss)
+            """,
+            [
+                {"id": span.id, "props": span.model_dump(), "source_id": span.source_id}
+                for span in graph.source_spans
+            ],
+        )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (c:Chunk {id: row.id})
+            SET c += row.props
+            WITH c, row
+            MATCH (ss:SourceSpan {id: row.span_id})
+            MERGE (c)-[:DERIVED_FROM]->(ss)
+            """,
+            [
+                {"id": chunk.id, "props": chunk.model_dump(), "span_id": chunk.source_span_id}
+                for chunk in graph.chunks
+            ],
+        )
+        entity_rows_by_label: dict[str, list[dict[str, object]]] = defaultdict(list)
+        datasets_by_id: dict[str, dict[str, object]] = {}
+        dataset_memberships: list[dict[str, object]] = []
+        graphify_node_rows: list[dict[str, object]] = []
         for entity in graph.entities:
             labels = f"DemoNode:Entity:{entity.type.value}"
-            # Business rows also get their mapped type (Team, League, Player...) as a
-            # label — Neo4j Bloom/Explore color by label, so without this every
-            # structured entity renders as one undifferentiated BusinessEntity color.
+            # Structured rows also get their configured mapped type as a Neo4j label.
             mapped = str(entity.metadata.get("mapped_type") or "")
             if mapped and mapped != entity.type.value and mapped.isidentifier():
                 labels += f":{mapped}"
@@ -151,63 +171,25 @@ class Neo4jGraphRepository:
                     "dataset": entity.metadata.get("dataset"),
                     "connector": entity.metadata.get("connector"),
                     "mapped_type": entity.metadata.get("mapped_type"),
+                    **_queryable_entity_props(entity.metadata),
                 }
             )
-            self.client.execute(
-                f"MERGE (e:{labels} {{id: $id}}) SET e += $props",
-                {"id": entity.id, "props": props},
-            )
-            self.client.execute(
-                """
-                MATCH (p:Project {slug: $project_slug})
-                MATCH (e:Entity {id: $entity_id})
-                MERGE (p)-[r:HAS_ENTITY]->(e)
-                SET r.caption = "has entity",
-                    r.demo_relationship = true
-                """,
-                {"project_slug": graph.project_slug, "entity_id": entity.id},
-            )
+            entity_rows_by_label[labels].append({"id": entity.id, "props": props})
             domain = entity.metadata.get("domain")
             dataset = entity.metadata.get("dataset")
             if isinstance(domain, str) and isinstance(dataset, str):
-                self.client.execute(
-                    """
-                    MATCH (p:Project {slug: $project_slug})
-                    MERGE (d:Domain {id: $domain_id})
-                    SET d.name = $domain,
-                        d.caption = $domain,
-                        d.project_slug = $project_slug
-                    MERGE (ds:Dataset {id: $dataset_id})
-                    SET ds.name = $dataset,
-                        ds.caption = $dataset,
-                        ds.domain = $domain,
-                        ds.project_slug = $project_slug,
-                        ds.connector = $connector
-                    MERGE (p)-[:HAS_DOMAIN]->(d)
-                    MERGE (d)-[:HAS_DATASET]->(ds)
-                    WITH ds
-                    MATCH (e:Entity {id: $entity_id})
-                    MERGE (ds)-[:HAS_ENTITY]->(e)
-                    """,
-                    {
-                        "project_slug": graph.project_slug,
-                        "domain": domain,
-                        "dataset": dataset,
-                        "connector": entity.metadata.get("connector"),
-                        "domain_id": f"{graph.project_slug}:{domain}",
-                        "dataset_id": f"{graph.project_slug}:{domain}:{dataset}",
-                        "entity_id": entity.id,
-                    },
-                )
+                dataset_id = f"{graph.project_slug}:{domain}:{dataset}"
+                datasets_by_id[dataset_id] = {
+                    "project_slug": graph.project_slug,
+                    "domain": domain,
+                    "dataset": dataset,
+                    "connector": entity.metadata.get("connector"),
+                    "domain_id": f"{graph.project_slug}:{domain}",
+                    "dataset_id": dataset_id,
+                }
+                dataset_memberships.append({"dataset_id": dataset_id, "entity_id": entity.id})
             if entity.graphify_id:
-                self.client.execute(
-                    """
-                    MERGE (g:GraphifyNode {id: $id})
-                    SET g += $props
-                    WITH g
-                    MATCH (e:Entity {id: $entity_id})
-                    MERGE (e)-[:DERIVED_FROM_GRAPHIFY]->(g)
-                    """,
+                graphify_node_rows.append(
                     {
                         "id": entity.graphify_id,
                         "entity_id": entity.id,
@@ -222,30 +204,67 @@ class Neo4jGraphRepository:
                                 **entity.metadata,
                             }
                         ),
-                    },
+                    }
                 )
-        for assertion in graph.assertions:
-            self.client.execute(
-                """
-                MERGE (a:Assertion {id: $id})
-                SET a += $props,
-                    a.caption = $predicate,
-                    a.display_name = $predicate,
-                    a.stale = false,
-                    a.seen_at = $seen_at
-                WITH a
-                MATCH (p:Project {slug: $project_slug})
-                MERGE (p)-[:HAS_ASSERTION]->(a)
-                WITH a
-                MATCH (subject:Entity {id: $subject_id})
-                MERGE (a)-[:SUBJECT]->(subject)
-                WITH a
-                MATCH (object:Entity {id: $object_id})
-                MERGE (a)-[:OBJECT]->(object)
-                WITH a
-                MATCH (span:SourceSpan {id: $span_id})
-                MERGE (a)-[:EVIDENCED_BY]->(span)
+        for labels, rows in entity_rows_by_label.items():
+            _execute_batches(
+                self.client,
+                f"""
+                UNWIND $rows AS row
+                MERGE (e:{labels} {{id: row.id}})
+                SET e += row.props
+                WITH e
+                MATCH (p:Project {{slug: $project_slug}})
+                MERGE (p)-[r:HAS_ENTITY]->(e)
+                SET r.caption = "has entity", r.demo_relationship = true
                 """,
+                rows,
+                project_slug=graph.project_slug,
+            )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MATCH (p:Project {slug: row.project_slug})
+            MERGE (d:Domain {id: row.domain_id})
+            SET d.name = row.domain, d.caption = row.domain,
+                d.project_slug = row.project_slug
+            MERGE (ds:Dataset {id: row.dataset_id})
+            SET ds.name = row.dataset, ds.caption = row.dataset,
+                ds.domain = row.domain, ds.project_slug = row.project_slug,
+                ds.connector = row.connector
+            MERGE (p)-[:HAS_DOMAIN]->(d)
+            MERGE (d)-[:HAS_DATASET]->(ds)
+            """,
+            list(datasets_by_id.values()),
+        )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MATCH (ds:Dataset {id: row.dataset_id})
+            MATCH (e:Entity {id: row.entity_id})
+            MERGE (ds)-[:HAS_ENTITY]->(e)
+            """,
+            dataset_memberships,
+        )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (g:GraphifyNode {id: row.id})
+            SET g += row.props
+            WITH g, row
+            MATCH (e:Entity {id: row.entity_id})
+            MERGE (e)-[:DERIVED_FROM_GRAPHIFY]->(g)
+            """,
+            graphify_node_rows,
+        )
+        assertion_rows: list[dict[str, object]] = []
+        graphify_edge_rows: list[dict[str, object]] = []
+        visual_rows: dict[str, list[dict[str, object]]] = defaultdict(list)
+        for assertion in graph.assertions:
+            assertion_rows.append(
                 {
                     "id": assertion.id,
                     "props": _neo4j_props(assertion.model_dump(mode="json")),
@@ -255,27 +274,10 @@ class Neo4jGraphRepository:
                     "subject_id": assertion.subject_id,
                     "object_id": assertion.object_id,
                     "span_id": assertion.evidence_span_id,
-                },
+                }
             )
             if assertion.graphify_id:
-                self.client.execute(
-                    """
-                    MERGE (ge:GraphifyEdge {id: $id})
-                    SET ge += $props
-                    WITH ge
-                    MATCH (a:Assertion {id: $assertion_id})
-                    MERGE (a)-[:DERIVED_FROM_GRAPHIFY]->(ge)
-                    WITH ge
-                    OPTIONAL MATCH
-                        (subject:Entity {id: $subject_id})-[:DERIVED_FROM_GRAPHIFY]->
-                        (gs:GraphifyNode)
-                    OPTIONAL MATCH
-                        (object:Entity {id: $object_id})-[:DERIVED_FROM_GRAPHIFY]->
-                        (go:GraphifyNode)
-                    FOREACH (_ IN CASE WHEN gs IS NULL OR go IS NULL THEN [] ELSE [1] END |
-                        MERGE (gs)-[:GRAPHIFY_RELATES {edge_id: $id}]->(go)
-                    )
-                    """,
+                graphify_edge_rows.append(
                     {
                         "id": assertion.graphify_id,
                         "assertion_id": assertion.id,
@@ -292,25 +294,13 @@ class Neo4jGraphRepository:
                                 **assertion.metadata,
                             }
                         ),
-                    },
+                    }
                 )
             if self.write_visual_relationships:
                 rel_type = _visual_relationship_type(assertion.predicate)
-                self.client.execute(
-                    f"""
-                    MATCH (subject:Entity {{id: $subject_id}})
-                    MATCH (object:Entity {{id: $object_id}})
-                    MERGE (subject)-[r:{rel_type} {{assertion_id: $assertion_id}}]->(object)
-                    SET r.predicate = $predicate,
-                        r.confidence = $confidence,
-                        r.evidence_span_id = $evidence_span_id,
-                        r.extractor = $extractor,
-                        r.caption = $predicate,
-                        r.demo_relationship = true,
-                        r.stale = false,
-                        r.seen_at = $seen_at
-                    """,
+                visual_rows[rel_type].append(
                     {
+                        "project_slug": graph.project_slug,
                         "subject_id": assertion.subject_id,
                         "object_id": assertion.object_id,
                         "assertion_id": assertion.id,
@@ -319,8 +309,68 @@ class Neo4jGraphRepository:
                         "evidence_span_id": assertion.evidence_span_id,
                         "extractor": assertion.extractor,
                         "seen_at": seen_at,
-                    },
+                    }
                 )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (a:Assertion {id: row.id})
+            SET a += row.props, a.caption = row.predicate,
+                a.display_name = row.predicate, a.stale = false, a.seen_at = row.seen_at
+            WITH a, row
+            MATCH (p:Project {slug: row.project_slug})
+            MERGE (p)-[:HAS_ASSERTION]->(a)
+            WITH a, row
+            MATCH (subject:Entity {id: row.subject_id})
+            MERGE (a)-[:SUBJECT]->(subject)
+            WITH a, row
+            MATCH (object:Entity {id: row.object_id})
+            MERGE (a)-[:OBJECT]->(object)
+            WITH a, row
+            OPTIONAL MATCH (span:SourceSpan {id: row.span_id})
+            FOREACH (_ IN CASE WHEN span IS NULL THEN [] ELSE [1] END |
+                MERGE (a)-[:EVIDENCED_BY]->(span)
+            )
+            """,
+            assertion_rows,
+        )
+        _execute_batches(
+            self.client,
+            """
+            UNWIND $rows AS row
+            MERGE (ge:GraphifyEdge {id: row.id})
+            SET ge += row.props
+            WITH ge, row
+            MATCH (a:Assertion {id: row.assertion_id})
+            MERGE (a)-[:DERIVED_FROM_GRAPHIFY]->(ge)
+            WITH ge, row
+            OPTIONAL MATCH (subject:Entity {id: row.subject_id})-[:DERIVED_FROM_GRAPHIFY]->
+                (gs:GraphifyNode)
+            OPTIONAL MATCH (object:Entity {id: row.object_id})-[:DERIVED_FROM_GRAPHIFY]->
+                (go:GraphifyNode)
+            FOREACH (_ IN CASE WHEN gs IS NULL OR go IS NULL THEN [] ELSE [1] END |
+                MERGE (gs)-[:GRAPHIFY_RELATES {edge_id: row.id}]->(go)
+            )
+            """,
+            graphify_edge_rows,
+        )
+        for rel_type, rows in visual_rows.items():
+            _execute_batches(
+                self.client,
+                f"""
+                UNWIND $rows AS row
+                MATCH (subject:Entity {{id: row.subject_id}})
+                MATCH (object:Entity {{id: row.object_id}})
+                MERGE (subject)-[r:{rel_type} {{assertion_id: row.assertion_id}}]->(object)
+                SET r.predicate = row.predicate, r.confidence = row.confidence,
+                    r.evidence_span_id = row.evidence_span_id, r.extractor = row.extractor,
+                    r.project_slug = row.project_slug,
+                    r.caption = row.predicate, r.demo_relationship = true,
+                    r.stale = false, r.seen_at = row.seen_at
+                """,
+                rows,
+            )
         if prune_mode != "none":
             self.prune_graph(graph, prune_mode)
 
@@ -405,14 +455,15 @@ class Neo4jGraphRepository:
         )
         entity_rows = self.client.query(
             """
-            MATCH (:Project {slug: $slug})-[:HAS_ASSERTION]->(a:Assertion)
-            MATCH (a)-[:SUBJECT|OBJECT]->(e:Entity)
-            RETURN DISTINCT properties(e) AS props
+            MATCH (:Project {slug: $slug})-[:HAS_ENTITY]->(e:Entity)
+            WHERE coalesce(e.stale, false) = false
+            RETURN properties(e) AS props
             """,
             {"slug": project_slug},
         )
         assertion_rows = self.client.query(
             "MATCH (:Project {slug: $slug})-[:HAS_ASSERTION]->(a:Assertion) "
+            "WHERE coalesce(a.stale, false) = false "
             "RETURN properties(a) AS props",
             {"slug": project_slug},
         )
@@ -468,3 +519,43 @@ def _neo4j_props(props: Mapping[str, object]) -> dict[str, object]:
         else:
             clean[key] = value
     return clean
+
+
+def _queryable_entity_props(metadata: Mapping[str, object]) -> dict[str, object]:
+    declared = metadata.get("queryable_properties")
+    if not isinstance(declared, list):
+        return {}
+    output: dict[str, object] = {}
+    for name in declared:
+        if not isinstance(name, str):
+            continue
+        value = metadata.get(name)
+        if (
+            value is None
+            or value == "[redacted]"
+            or not isinstance(value, str | int | float | bool)
+        ):
+            continue
+        safe = "_".join(part for part in re_split_identifier(name) if part)
+        if safe:
+            output[f"attr_{safe.lower()}"] = value
+    return output
+
+
+def re_split_identifier(value: str) -> list[str]:
+    return [
+        "".join(character for character in part if character.isalnum())
+        for part in value.replace("-", "_").split("_")
+    ]
+
+
+def _execute_batches(
+    client: Neo4jClient,
+    statement: str,
+    rows: list[dict[str, object]],
+    *,
+    batch_size: int = 500,
+    **parameters: object,
+) -> None:
+    for batch in batched(rows, batch_size):
+        client.execute(statement, {**parameters, "rows": list(batch)})

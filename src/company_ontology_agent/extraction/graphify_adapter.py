@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import getpass
 import json
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -16,17 +19,14 @@ from typing import Any, Protocol
 
 from company_ontology_agent.config.project_config import ProjectConfig
 from company_ontology_agent.config.settings import runtime_settings
-from company_ontology_agent.graph.models import (
-    Assertion,
-    Entity,
-    EntityType,
-    ExtractedGraph,
-    Source,
-    SourceSpan,
+from company_ontology_agent.extraction.code_map import write_code_map
+from company_ontology_agent.extraction.graphify_artifacts import parse_graphify_graph
+from company_ontology_agent.extraction.graphify_report import (
+    _parse_graph_stats,
+    _parse_scan_stats,
+    render_graphify_report,
 )
-from company_ontology_agent.ontology.mappings import normalize_predicate
-from company_ontology_agent.utils.hashing import stable_hash
-from company_ontology_agent.utils.ids import slugify, stable_id
+from company_ontology_agent.graph.models import Entity, ExtractedGraph
 
 
 class ProgressReporter(Protocol):
@@ -105,7 +105,7 @@ class GraphifyExtractor:
         backend: str = "openai",
         mode: str = "deep",
         model: str | None = None,
-        no_viz: bool = True,
+        no_viz: bool = False,
         strict: bool = False,
         timeout_seconds: int | None = None,
         auto_name_communities: bool = True,
@@ -212,6 +212,7 @@ class GraphifyExtractor:
             if force:
                 argv.append("--force")
             _report(progress, f"Graphify incremental update (no LLM): input={graphify_input_path}.")
+            source_roots = [graphify_input_path, input_path.resolve()]
             result = _run_with_heartbeat(
                 argv,
                 cwd=self.output_path.parent,
@@ -221,7 +222,7 @@ class GraphifyExtractor:
                 completion_grace_seconds=30,
                 max_runtime_seconds=self.timeout_seconds,
             )
-        return self._finish_run(argv, result, project_slug, report)
+        return self._finish_run(argv, result, project_slug, report, source_roots=source_roots)
 
     def run(
         self,
@@ -267,6 +268,7 @@ class GraphifyExtractor:
                 f"backend={self.backend}, mode={self.mode}, "
                 f"input={graphify_input_path}, output={self.output_path}.",
             )
+            source_roots = [graphify_input_path, input_path.resolve()]
             result = _run_with_heartbeat(
                 command.argv(),
                 cwd=self.output_path.parent,
@@ -276,7 +278,9 @@ class GraphifyExtractor:
                 completion_grace_seconds=90,
                 max_runtime_seconds=self.timeout_seconds,
             )
-        return self._finish_run(command.argv(), result, project_slug, report)
+        return self._finish_run(
+            command.argv(), result, project_slug, report, source_roots=source_roots
+        )
 
     def _finish_run(
         self,
@@ -284,6 +288,8 @@ class GraphifyExtractor:
         result: subprocess.CompletedProcess[str],
         project_slug: str,
         report: Path,
+        *,
+        source_roots: list[Path] | None = None,
     ) -> GraphifyRunResult:
         """Parse graphify-out/graph.json into an ExtractedGraph and write the report.
 
@@ -292,9 +298,10 @@ class GraphifyExtractor:
         graph_json = self.output_path / "graph.json"
         graph_json_path = graph_json if graph_json.exists() else None
         if graph_json.exists():
-            graph = parse_graphify_graph(graph_json, project_slug)
+            graph = parse_graphify_graph(graph_json, project_slug, source_roots or [])
             if self.auto_name_communities:
                 graph = apply_community_names(graph, self.output_path)
+            write_code_map(graph, self.output_path)
         else:
             graph = ExtractedGraph(
                 project_slug=project_slug,
@@ -324,13 +331,36 @@ class GraphifyExtractor:
 
 
 def resolve_graphify_executable(executable: str = "graphify") -> str | None:
-    if found := shutil.which(executable):
-        return found
-    for scripts_dir in (Path(sys.executable).parent, Path(sys.prefix) / "bin"):
+    requested = Path(executable).expanduser()
+    if requested.parent != Path("."):
+        return str(requested) if _is_runnable_entrypoint(requested) else None
+    path_dirs = [Path(value) for value in os.environ.get("PATH", "").split(os.pathsep) if value]
+    for scripts_dir in [*path_dirs, Path(sys.executable).parent, Path(sys.prefix) / "bin"]:
         candidate = scripts_dir / executable
-        if candidate.exists():
+        if _is_runnable_entrypoint(candidate):
             return str(candidate)
     return None
+
+
+def _is_runnable_entrypoint(candidate: Path) -> bool:
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        return False
+    try:
+        first_line = candidate.open("rb").readline(512).decode(errors="ignore").strip()
+    except OSError:
+        return False
+    if not first_line.startswith("#!"):
+        return True
+    command = shlex.split(first_line[2:].strip())
+    if not command:
+        return False
+    interpreter = Path(command[0])
+    if interpreter.name == "env" and len(command) > 1:
+        return any(
+            _is_runnable_entrypoint(directory / command[-1])
+            for directory in (Path(value) for value in os.environ.get("PATH", "").split(os.pathsep))
+        )
+    return interpreter.is_file() and os.access(interpreter, os.X_OK)
 
 
 def _terminate_with_note(
@@ -441,128 +471,6 @@ def _graphify_visible_input(input_path: Path) -> Iterator[Path]:
 
 def _has_hidden_component(path: Path) -> bool:
     return any(part.startswith(".") and part not in {".", ".."} for part in path.parts)
-
-
-def parse_graphify_graph(path: Path, project_slug: str) -> ExtractedGraph:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    raw_nodes = _extract_collection(data, "nodes")
-    raw_edges = _extract_collection(data, "edges") or _extract_collection(data, "links")
-
-    entities_by_raw_id: dict[str, Entity] = {}
-    graphify_source = Source(
-        id=stable_id("source", "graphify", str(path)),
-        path=str(path),
-        source_type="graphify_json",
-        sha256=stable_hash(path.read_text(encoding="utf-8")),
-        title="Graphify graph.json",
-    )
-
-    spans: list[SourceSpan] = []
-    for raw_node in raw_nodes:
-        node = _as_dict(raw_node)
-        raw_id = str(node.get("id") or node.get("key") or node.get("name") or node.get("label"))
-        name = str(node.get("name") or node.get("label") or node.get("title") or raw_id)
-        raw_type = node.get("type") or node.get("kind") or node.get("category")
-        raw_type = raw_type or _graphify_node_type(node, name)
-        entity_type = _entity_type(str(raw_type))
-        normalized = slugify(name).replace("-", " ")
-        entities_by_raw_id[raw_id] = Entity(
-            id=stable_id("entity", normalized, entity_type.value),
-            type=entity_type,
-            name=name,
-            normalized_name=normalized,
-            aliases=_string_list(node.get("aliases")),
-            graphify_id=raw_id,
-            source_path=_string_value(
-                node.get("path")
-                or node.get("file")
-                or node.get("filepath")
-                or node.get("source")
-                or node.get("source_file")
-            ),
-            community=_string_value(
-                node.get("community")
-                or node.get("cluster")
-                or node.get("group")
-                or node.get("community_name")
-            ),
-            extraction_source=_graphify_extraction_source(node),
-            confidence_tier="extracted",
-            description=_string_value(
-                node.get("description") or node.get("summary") or node.get("doc")
-            ),
-            metadata=_metadata(node),
-        )
-
-    assertions: list[Assertion] = []
-    for index, raw_edge in enumerate(raw_edges):
-        edge = _as_dict(raw_edge)
-        source_raw = str(edge.get("source") or edge.get("from") or edge.get("src") or "")
-        target_raw = str(edge.get("target") or edge.get("to") or edge.get("dst") or "")
-        source = entities_by_raw_id.get(source_raw)
-        target = entities_by_raw_id.get(target_raw)
-        if source is None or target is None:
-            continue
-        predicate = normalize_predicate(
-            slugify(
-                str(
-                    edge.get("predicate")
-                    or edge.get("relationship")
-                    or edge.get("relation")
-                    or edge.get("type")
-                    or edge.get("label")
-                    or "related_to"
-                )
-            ).replace("-", "_")
-        )
-        confidence = _confidence(edge.get("confidence_score", edge.get("confidence")))
-        confidence_tier = _confidence_tier(edge)
-        source_path = _string_value(
-            edge.get("path") or edge.get("file") or edge.get("filepath") or edge.get("source_path")
-        )
-        evidence_id = stable_id("span", "graphify", path.name, index, source_path or "")
-        evidence_text = str(
-            edge.get("evidence")
-            or edge.get("context")
-            or edge.get("reason")
-            or edge.get("label")
-            or predicate
-        )
-        spans.append(
-            SourceSpan(
-                id=evidence_id,
-                source_id=graphify_source.id,
-                start=index,
-                end=index,
-                text=evidence_text,
-            )
-        )
-        assertions.append(
-            Assertion(
-                id=stable_id("assertion", source.id, predicate, target.id, evidence_id),
-                predicate=predicate,
-                subject_id=source.id,
-                object_id=target.id,
-                evidence_span_id=evidence_id,
-                confidence=confidence,
-                extractor="graphify",
-                graphify_id=str(edge.get("id") or edge.get("key") or index),
-                source_path=source_path,
-                community=_string_value(edge.get("community") or edge.get("cluster")),
-                extraction_source=_graphify_extraction_source(edge),
-                confidence_tier=confidence_tier,
-                evidence_text=evidence_text,
-                metadata=_metadata(edge),
-            )
-        )
-
-    return ExtractedGraph(
-        project_slug=project_slug,
-        sources=[graphify_source],
-        source_spans=spans,
-        entities=list(entities_by_raw_id.values()),
-        assertions=assertions,
-    )
 
 
 def apply_community_names(graph: ExtractedGraph, graphify_output_path: Path) -> ExtractedGraph:
@@ -763,8 +671,12 @@ COMMUNITY_STOPWORDS = {
     "user",
     "users",
     "var",
-    "yureeh",
 }
+
+try:  # keep machine-specific tokens (the running user's login) out of community names
+    COMMUNITY_STOPWORDS.add(getpass.getuser().lower())
+except Exception:  # noqa: BLE001 - no login name available; nothing to exclude
+    pass
 
 
 def _label_tokens(value: str) -> list[str]:
@@ -780,219 +692,7 @@ def _label_tokens(value: str) -> list[str]:
 
 
 def _display_token(value: str) -> str:
-    acronyms = {"api", "aws", "csv", "db", "elo", "gcp", "http", "json", "llm", "sql"}
+    acronyms = {"api", "aws", "csv", "db", "gcp", "http", "json", "llm", "sql"}
     if value in acronyms:
         return value.upper()
     return value.capitalize()
-
-
-def render_graphify_report(
-    command: list[str],
-    exit_code: int,
-    stdout: str,
-    stderr: str,
-    *,
-    warnings: list[str] | None = None,
-    verbose: bool = False,
-) -> str:
-    lines = ["# Graphify Report", "", f"Command: `{' '.join(command)}`", ""]
-    status = "succeeded" if exit_code == 0 else "failed"
-    lines.append(f"Status: {status}")
-    if stats := _parse_scan_stats(stdout):
-        lines.append(
-            "Scanned: "
-            f"{stats['code']} code, {stats['docs']} docs, "
-            f"{stats['papers']} papers, {stats['images']} images"
-        )
-    if stats := _parse_graph_stats(stdout):
-        lines.append(f"Graph: {stats['nodes']} nodes, {stats['edges']} edges")
-    if cost := _parse_cost(stdout):
-        lines.append(f"Cost: {cost}")
-    if warnings:
-        lines.extend(["", "## Warnings", ""])
-        lines.extend(f"- {warning}" for warning in warnings)
-    if exit_code != 0 and stderr.strip():
-        lines.extend(["", "## Error", "", "```text", stderr.strip(), "```"])
-    if verbose:
-        lines.extend(
-            [
-                "",
-                "## Raw Output",
-                "",
-                f"Exit code: {exit_code}",
-                "",
-                "### stdout",
-                "",
-                "```text",
-                stdout.rstrip(),
-                "```",
-            ]
-        )
-        if stderr.strip():
-            lines.extend(["", "### stderr", "", "```text", stderr.rstrip(), "```"])
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _parse_scan_stats(output: str) -> dict[str, int] | None:
-    match = re.search(
-        r"found (?P<code>\d+) code, (?P<docs>\d+) docs, "
-        r"(?P<papers>\d+) papers, (?P<images>\d+) images",
-        output,
-    )
-    if not match:
-        return None
-    return {key: int(value) for key, value in match.groupdict().items()}
-
-
-def _parse_graph_stats(output: str) -> dict[str, int] | None:
-    match = re.search(r"graph\.json: (?P<nodes>\d+) nodes, (?P<edges>\d+) edges", output)
-    if not match:
-        return None
-    return {key: int(value) for key, value in match.groupdict().items()}
-
-
-def _parse_cost(output: str) -> str | None:
-    match = re.search(r"tokens: (?P<cost>.+)", output)
-    return match.group("cost").strip() if match else None
-
-
-def _extract_collection(data: Any, name: str) -> list[Any]:
-    if isinstance(data, dict):
-        value = data.get(name)
-        if isinstance(value, list):
-            return value
-        graph = data.get("graph")
-        if isinstance(graph, dict):
-            nested = graph.get(name)
-            if isinstance(nested, list):
-                return nested
-    return []
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
-
-
-def _entity_type(value: str) -> EntityType:
-    normalized = value.strip().lower()
-    normalized = normalized.replace("-", "_").replace(" ", "_")
-    for entity_type in EntityType:
-        if entity_type.value.lower() == normalized or entity_type.name.lower() == normalized:
-            return entity_type
-    mapping = {
-        "repo": EntityType.system,
-        "repository": EntityType.system,
-        "service": EntityType.system,
-        "symbol": EntityType.function,
-        "method": EntityType.function,
-        "endpoint": EntityType.api_endpoint,
-        "api": EntityType.api_endpoint,
-        "model": EntityType.data_model,
-        "table": EntityType.data_model,
-        "db": EntityType.database,
-        "database": EntityType.database,
-        "datastore": EntityType.data_store,
-        "store": EntityType.data_store,
-        "queue": EntityType.queue,
-        "external": EntityType.external_service,
-        "external_service": EntityType.external_service,
-        "deployment": EntityType.deployment_unit,
-        "environment": EntityType.environment,
-        "config": EntityType.config,
-        "secret": EntityType.secret_ref,
-        "workflow": EntityType.workflow,
-        "role": EntityType.user_role,
-    }
-    if normalized in mapping:
-        return mapping[normalized]
-    return EntityType.concept
-
-
-def _graphify_node_type(node: dict[str, Any], name: str) -> str:
-    file_type = str(node.get("file_type") or "").lower()
-    origin = str(node.get("_origin") or node.get("origin") or "").lower()
-    source_file = str(node.get("source_file") or node.get("file") or "")
-    label = name.strip()
-    label_lower = label.lower()
-    if re.search(r"^(get|post|put|patch|delete)\s+/", label_lower):
-        return "endpoint"
-    if re.search(r"\b(get|post|put|patch|delete)\s*\(", label_lower) and "/" in label_lower:
-        return "endpoint"
-    file_suffixes = (".py", ".ts", ".tsx", ".js", ".jsx", ".md", ".yaml", ".yml", ".toml", ".json")
-    if label.endswith(file_suffixes):
-        return "file"
-    if "/" in label and "." in Path(label).name:
-        return "file"
-    if label.endswith("()"):
-        return "function"
-    if origin == "ast" and re.search(r"[a-zA-Z_][\w_]*\(\)$", label):
-        return "function"
-    if file_type == "code" and source_file and label == Path(source_file).name:
-        return "file"
-    if file_type == "code" and label and label[:1].isupper() and " " not in label:
-        return "class"
-    if file_type == "docs":
-        return "concept"
-    return "Concept"
-
-
-def _string_value(value: Any) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _graphify_extraction_source(value: dict[str, Any]) -> str:
-    raw = str(
-        value.get("extraction_source")
-        or value.get("source")
-        or value.get("origin")
-        or value.get("_origin")
-        or value.get("kind")
-        or ""
-    ).lower()
-    if "semantic" in raw or "llm" in raw or "inferred" in raw:
-        return "graphify_semantic"
-    if "ast" in raw or "code" in raw or "symbol" in raw:
-        return "graphify_ast"
-    return "graphify"
-
-
-def _metadata(value: dict[str, Any]) -> dict[str, str | int | float | bool | None]:
-    result: dict[str, str | int | float | bool | None] = {}
-    for key, item in value.items():
-        if isinstance(item, str | int | float | bool) or item is None:
-            result[str(key)] = item
-    return result
-
-
-def _string_list(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return [str(item) for item in value]
-    if isinstance(value, str) and value:
-        return [value]
-    return []
-
-
-def _confidence(value: Any) -> float:
-    if isinstance(value, int | float):
-        return max(0.0, min(1.0, float(value)))
-    return 0.7
-
-
-def _confidence_tier(value: dict[str, Any]) -> str:
-    raw = str(value.get("confidence") or value.get("confidence_tier") or "").strip().lower()
-    if raw in {"extracted", "inferred", "ambiguous", "generated"}:
-        return raw
-    predicate = str(
-        value.get("predicate")
-        or value.get("relationship")
-        or value.get("relation")
-        or value.get("type")
-        or value.get("label")
-        or ""
-    )
-    if normalize_predicate(predicate) in {"related_to", "supports"}:
-        return "inferred"
-    return "extracted"

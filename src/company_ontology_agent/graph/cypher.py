@@ -43,7 +43,7 @@ FOR (d:Dataset)
 REQUIRE d.id IS UNIQUE;
 """
 
-EXPLORE_QUERIES = """// Company Ontology Agent demo queries
+EXPLORE_QUERIES = """// Ontology Atlas expert/debug queries
 
 // 1. Curated explorable graph, excluding provenance internals
 MATCH p=(a:DemoNode)-[r]->(b:DemoNode)

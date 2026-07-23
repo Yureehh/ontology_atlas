@@ -47,9 +47,7 @@ TECH_HINTS = {
 }
 
 
-def build_curated_projection(
-    project_root: Path, config: ProjectConfig, base_graph: ExtractedGraph
-) -> ExtractedGraph:
+def build_curated_projection(project_root: Path, config: ProjectConfig) -> ExtractedGraph:
     raw_root = project_root / "data" / "raw"
     if not raw_root.exists():
         return ExtractedGraph(project_slug=config.project_slug)

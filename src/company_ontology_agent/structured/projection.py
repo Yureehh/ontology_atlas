@@ -85,6 +85,7 @@ def _project_dataset(
     entities_by_id: dict[str, Entity] = {}
     assertions_by_id: dict[str, Assertion] = {}
     by_alias_and_key: dict[tuple[str, str], Entity] = {}
+    entity_ids_by_alias: dict[str, set[str]] = {}
 
     for alias, entity_mapping in mapping.entities.items():
         for record in dataset.records_by_source.get(entity_mapping.source, []):
@@ -112,6 +113,9 @@ def _project_dataset(
                     "row_number": record.row_number,
                     "run_id": run_id,
                     "seen_at": now,
+                    "queryable_properties": sorted(
+                        set(entity_mapping.properties) - set(entity_mapping.redact)
+                    ),
                     **_mapped_properties(
                         record.values,
                         entity_mapping.properties,
@@ -121,6 +125,72 @@ def _project_dataset(
             )
             entities_by_id.setdefault(entity.id, entity)
             by_alias_and_key[(alias, key_value)] = entities_by_id[entity.id]
+            entity_ids_by_alias.setdefault(alias, set()).add(entity.id)
+
+    for alias, entity_mapping in mapping.entities.items():
+        member_ids = sorted(entity_ids_by_alias.get(alias, set()))
+        if not member_ids:
+            continue
+        records = dataset.records_by_source.get(entity_mapping.source, [])
+        fields = sorted({field for record in records for field in record.values})
+        summary_id = stable_id(
+            "dataset_summary", project_slug, dataset_config.name, alias, entity_mapping.type
+        )
+        summary = Entity(
+            id=summary_id,
+            type=EntityType.concept,
+            name=f"{entity_mapping.type} in {dataset_config.name}",
+            normalized_name=f"{entity_mapping.type} in {dataset_config.name}".lower(),
+            source_span_ids=[span.id],
+            source_path=source.path,
+            extraction_source="structured_connector",
+            confidence_tier="extracted",
+            description=(
+                f"Authoritative {entity_mapping.type} records from {dataset_config.name}."
+            ),
+            metadata={
+                "domain": dataset_config.domain,
+                "dataset": dataset_config.name,
+                "connector": dataset_config.connector,
+                "mapped_type": entity_mapping.type,
+                "source": entity_mapping.source,
+                "record_count": len(member_ids),
+                "fields": fields,
+                "authority": "authoritative",
+                "semantic_summary": True,
+                "run_id": run_id,
+                "seen_at": now,
+            },
+        )
+        entities_by_id[summary.id] = summary
+        for member_id in member_ids:
+            assertion_id = stable_id(
+                "assertion", dataset_config.name, "member_of", member_id, summary.id
+            )
+            assertions_by_id[assertion_id] = Assertion(
+                id=assertion_id,
+                predicate="member_of",
+                subject_id=member_id,
+                object_id=summary.id,
+                evidence_span_id=span.id,
+                confidence=1.0,
+                extractor="structured_connector",
+                source_path=source.path,
+                extraction_source="structured_connector",
+                confidence_tier="extracted",
+                evidence_text=(
+                    f"{dataset_config.name} maps this record to {entity_mapping.type}."
+                ),
+                metadata={
+                    "domain": dataset_config.domain,
+                    "dataset": dataset_config.name,
+                    "connector": dataset_config.connector,
+                    "mapped_type": entity_mapping.type,
+                    "authority": "authoritative",
+                    "run_id": run_id,
+                    "seen_at": now,
+                },
+            )
 
     for relationship in mapping.relationships:
         from_mapping = mapping.entities[relationship.from_entity]
@@ -188,14 +258,21 @@ def _dataset_fingerprint(records_by_source: dict[str, list[Any]]) -> str:
 
 def _mapped_properties(
     values: dict[str, Any], properties: list[str], redacted: list[str]
-) -> dict[str, str]:
-    output: dict[str, str] = {}
+) -> dict[str, Any]:
+    output: dict[str, Any] = {}
     redacted_set = set(redacted)
     for name in properties:
         if name not in values:
             continue
-        output[name] = "[redacted]" if name in redacted_set else _string(values.get(name))
+        output[name] = "[redacted]" if name in redacted_set else _native_scalar(values.get(name))
     return output
+
+
+def _native_scalar(value: Any) -> str | int | float | bool | None:
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    isoformat = getattr(value, "isoformat", None)
+    return str(isoformat()) if callable(isoformat) else str(value)
 
 
 def _mapping_key(values: dict[str, Any], key: str | list[str]) -> str:

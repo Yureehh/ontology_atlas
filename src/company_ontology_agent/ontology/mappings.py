@@ -35,6 +35,7 @@ VALID_PREDICATES = {"mentions", "related_to", "blocks", "requires", "decides", "
 CANONICAL_PREDICATES = {
     "mentions",
     "related_to",
+    "relates_to_domain",
     "blocks",
     "requires",
     "decides",
@@ -89,17 +90,6 @@ CANONICAL_PREDICATES = {
     "approved_by",
     "rejected_by",
     "paid_to",
-    "match_in_league",
-    "team_played_match",
-    "player_played_match",
-    "player_played_for",
-    "team_in_league",
-    "model_artifact_describes",
-    "model_artifact_generated",
-    "prediction_for_match",
-    "prediction_uses_market",
-    "bet_on_match",
-    "bet_uses_market",
 }
 
 PREDICATE_ALIASES = {

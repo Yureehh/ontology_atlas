@@ -12,7 +12,6 @@ def init_project(
     project_slug: str,
     template: str = "graphify-neo4j",
     with_docker: bool = False,
-    with_markdown_wiki: bool = False,
     force: bool = False,
     target: Path | None = None,
     source: Path | None = None,
@@ -25,7 +24,6 @@ def init_project(
         project_target,
         project_slug,
         with_docker=with_docker,
-        with_markdown_wiki=with_markdown_wiki,
         force=force,
     )
     typer.echo(f"Initialized ontology project at {target}")

@@ -41,3 +41,25 @@ class Neo4jClient:
 
     def reset_database(self) -> None:
         self.execute("MATCH (n) DETACH DELETE n")
+
+    def reset_project(self, project_slug: str) -> None:
+        """Delete only the given project's subgraph; other projects in the DB survive."""
+        statements = [
+            # Graphify nodes/edges hang off this project's entities/assertions.
+            "MATCH (:Project {slug: $slug})-[:HAS_ENTITY]->(:Entity)"
+            "-[:DERIVED_FROM_GRAPHIFY]->(g:GraphifyNode) DETACH DELETE g",
+            "MATCH (:Project {slug: $slug})-[:HAS_ASSERTION]->(:Assertion)"
+            "-[:DERIVED_FROM_GRAPHIFY]->(ge:GraphifyEdge) DETACH DELETE ge",
+            "MATCH (:Project {slug: $slug})-[:HAS_SOURCE]->(:Source)-[:HAS_SPAN]->(ss:SourceSpan)"
+            " OPTIONAL MATCH (c:Chunk)-[:DERIVED_FROM]->(ss) DETACH DELETE ss, c",
+            "MATCH (:Project {slug: $slug})-[:HAS_SOURCE]->(s:Source) DETACH DELETE s",
+            "MATCH (:Project {slug: $slug})-[:HAS_ASSERTION]->(a:Assertion) DETACH DELETE a",
+            "MATCH (:Project {slug: $slug})-[:HAS_ENTITY]->(e:Entity) DETACH DELETE e",
+            "MATCH (:Project {slug: $slug})-[:HAS_DOMAIN]->(d)"
+            " OPTIONAL MATCH (d)-[:HAS_DATASET]->(ds) DETACH DELETE d, ds",
+            "MATCH (chunk:KnowledgeChunk {project_slug: $slug}) DETACH DELETE chunk",
+            "MATCH (m:RagIndexMeta {project_slug: $slug}) DETACH DELETE m",
+            "MATCH (p:Project {slug: $slug}) DETACH DELETE p",
+        ]
+        for statement in statements:
+            self.execute(statement, {"slug": project_slug})

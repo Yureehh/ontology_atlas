@@ -6,14 +6,10 @@ import os
 import sqlite3
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from company_ontology_agent.config.project_config import DatasetConfig
 from company_ontology_agent.structured.models import StructuredDataset, StructuredRecord
-
-
-class StructuredDataConnector(Protocol):
-    def load(self, project_root: Path, config: DatasetConfig) -> StructuredDataset: ...
 
 
 def load_dataset(project_root: Path, config: DatasetConfig) -> StructuredDataset:
@@ -190,9 +186,24 @@ def _resolve_path(project_root: Path, path: str) -> Path:
     return candidate
 
 
-def _read_csv(path: Path) -> Iterable[dict[str, str]]:
+def _read_csv(path: Path) -> Iterable[dict[str, object]]:
     with path.open("r", encoding="utf-8", newline="") as handle:
-        yield from csv.DictReader(handle)
+        for row in csv.DictReader(handle):
+            yield {key: _csv_scalar(value) for key, value in row.items()}
+
+
+def _csv_scalar(value: str | None) -> object:
+    if value is None or value == "":
+        return ""
+    folded = value.casefold()
+    if folded in {"true", "false"}:
+        return folded == "true"
+    if value.isdigit() and (value == "0" or not value.startswith("0")):
+        return int(value)
+    try:
+        return float(value) if any(character in value for character in ".eE") else value
+    except ValueError:
+        return value
 
 
 def _sqlite_tables(path: Path) -> list[str]:

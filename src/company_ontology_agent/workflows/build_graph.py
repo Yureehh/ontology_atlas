@@ -8,8 +8,7 @@ from pydantic import BaseModel, Field
 from company_ontology_agent.config.project_config import ProjectConfig, load_project_config
 from company_ontology_agent.config.settings import runtime_settings
 from company_ontology_agent.extraction.graphify_adapter import GraphifyExtractor
-from company_ontology_agent.extraction.llm_structured_extractor import LLMStructuredExtractor
-from company_ontology_agent.extraction.openai_provider import OpenAIProvider, OpenAIProviderConfig
+from company_ontology_agent.graph.baseline import write_scope_fingerprint
 from company_ontology_agent.graph.models import ExtractedGraph
 from company_ontology_agent.graph.neo4j_client import Neo4jClient, Neo4jConnection
 from company_ontology_agent.graph.repository import (
@@ -17,11 +16,13 @@ from company_ontology_agent.graph.repository import (
     JsonGraphRepository,
     Neo4jGraphRepository,
 )
+from company_ontology_agent.ingestion.documents import build_document_graph
 from company_ontology_agent.ontology.validator import OntologyValidator
 from company_ontology_agent.resolution.entity_resolution import EntityResolver
 from company_ontology_agent.structured.models import PruneMode
 from company_ontology_agent.structured.projection import build_structured_graph
 from company_ontology_agent.workflows.projection import build_curated_projection
+from company_ontology_agent.workflows.semantic_enrichment import build_semantic_enrichment
 
 
 class BuildGraphResult(BaseModel):
@@ -86,8 +87,6 @@ def build_graph_from_graphify(
 ) -> BuildGraphResult:
     root = project_root or Path.cwd()
     config = load_project_config(root)
-    normalized_path = root / "data" / "normalized"
-
     graph = ExtractedGraph(project_slug=config.project_slug)
     if graphify_graph is not None:
         _report(
@@ -108,24 +107,21 @@ def build_graph_from_graphify(
         )
         graph = graph.merge(extracted)
 
-    provider = _llm_provider(config)
-    if provider is not None or config.extraction.local_fallback_enabled:
-        mode = "OpenAI" if provider is not None else "local fallback"
-        _report(progress, f"Running {mode} structured extraction over {normalized_path}.")
-        structured_extractor = LLMStructuredExtractor(provider=provider)
-        structured = structured_extractor.extract(normalized_path, config.project_slug)
-        _report(
-            progress,
-            f"Structured extraction produced {len(structured.entities)} entities and "
-            f"{len(structured.assertions)} assertions.",
-        )
-        graph = graph.merge(structured)
-    else:
-        _report(progress, "Skipping local fallback structured extraction.")
+    _report(progress, "Graphify is the sole code and document extraction stage.")
+
+    if config.rag.document_chunks:
+        documents = build_document_graph(root, config)
+        if documents.sources:
+            _report(
+                progress,
+                f"Ingested {len(documents.sources)} document(s) as "
+                f"{len(documents.chunks)} full-text chunk(s).",
+            )
+        graph = graph.merge(documents)
 
     if config.extraction.ontology_projection_enabled:
         _report(progress, "Building opt-in ontology projection.")
-        curated = build_curated_projection(root, config, graph)
+        curated = build_curated_projection(root, config)
         _report(
             progress,
             f"Ontology projection produced {len(curated.entities)} entities and "
@@ -147,6 +143,13 @@ def build_graph_from_graphify(
             f"Structured datasets produced {len(dataset_graph.entities)} entities and "
             f"{len(dataset_graph.assertions)} assertions.",
         )
+    if config.extraction.semantic_enrichment_enabled:
+        enrichment = build_semantic_enrichment(graph, dataset_graph)
+        _report(
+            progress,
+            f"Semantic alignment produced {len(enrichment.assertions)} bounded relationship(s).",
+        )
+        graph = graph.merge(enrichment)
     graph = graph.merge(dataset_graph)
 
     _report(
@@ -168,11 +171,15 @@ def build_graph_from_graphify(
     repository = repository_for(root, config, dry_run=dry_run)
     _report(progress, "Bootstrapping graph constraints/storage.")
     repository.bootstrap()
-    if replace and isinstance(repository, JsonGraphRepository):
-        repository.snapshot_previous()  # baseline for run-to-run diff, before overwrite
-        _report(progress, "Writing local validation snapshot.")
-        repository.replace_graph(resolved_graph)
-    else:
+    local_repository = JsonGraphRepository(root / "data" / "processed" / "graph.json")
+    if replace:
+        local_repository.bootstrap()
+        local_repository.snapshot_previous()
+        _report(progress, "Writing canonical local snapshot and comparison fingerprint.")
+        local_repository.replace_graph(resolved_graph)
+        write_scope_fingerprint(root, config)
+
+    if not isinstance(repository, JsonGraphRepository):
         mode = "local JSON" if dry_run else f"Neo4j upsert with prune={prune_mode}"
         _report(progress, f"Writing graph to {mode}.")
         repository.upsert_graph(resolved_graph, prune_mode=prune_mode)
@@ -183,21 +190,6 @@ def build_graph_from_graphify(
         warnings=graph.warnings,
         rejected_count=len(validation.rejected),
         dry_run=dry_run,
-    )
-
-
-def _llm_provider(config: ProjectConfig) -> OpenAIProvider | None:
-    if config.llm.provider == "local":
-        return None
-    if config.llm.provider != "openai":
-        raise RuntimeError(f"Unsupported LLM provider: {config.llm.provider}")
-    settings = runtime_settings(config)
-    if not settings.llm_api_key or not settings.llm_model:
-        raise RuntimeError(
-            f"OpenAI extraction requires {config.llm.api_key_env} and {config.llm.model_env}."
-        )
-    return OpenAIProvider(
-        OpenAIProviderConfig(api_key=settings.llm_api_key, model=settings.llm_model)
     )
 
 

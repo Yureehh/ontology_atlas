@@ -1,39 +1,19 @@
 from __future__ import annotations
 
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+import company_ontology_agent.cli.main as cli_main
 from company_ontology_agent.cli.main import _strict_required_checks_pass, app
-from company_ontology_agent.config.project_config import load_project_config
-from company_ontology_agent.extraction.graphify_adapter import render_graphify_report
-from company_ontology_agent.extraction.llm_structured_extractor import LLMStructuredExtractor
+from company_ontology_agent.config.project_config import load_project_config, write_project_config
+from company_ontology_agent.config.templates import scaffold_project
+from company_ontology_agent.extraction.graphify_report import render_graphify_report
 from company_ontology_agent.graph.cypher import CONSTRAINTS
-from company_ontology_agent.ingestion.normalizer import read_normalized_jsonl
+from company_ontology_agent.graph.models import Entity, EntityType, ExtractedGraph
 from company_ontology_agent.ontology.mappings import normalize_predicate
 from company_ontology_agent.utils.ids import stable_id
-
-
-def _graphify_runnable() -> bool:
-    """True only if the external graphify tool is present AND actually executes.
-
-    Guards the full-pipeline integration test so ``make test`` stays green where
-    graphify isn't installed (or a console-script has a stale shebang).
-    """
-    exe = shutil.which("graphify")
-    if not exe:
-        return False
-    try:
-        subprocess.run([exe, "--help"], capture_output=True, timeout=15, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
-
-
-_GRAPHIFY_RUNNABLE = _graphify_runnable()
 
 
 def test_stable_id_is_replayable() -> None:
@@ -45,6 +25,86 @@ def test_constraints_include_assertion_model() -> None:
     assert "entity_id" in CONSTRAINTS
 
 
+def test_entity_metadata_supports_recursive_json_without_serializer_warnings() -> None:
+    entity = Entity(
+        id="team",
+        type=EntityType.business_entity,
+        name="Team Liquid",
+        normalized_name="team liquid",
+        metadata={
+            "datasets": ["matches", "team_league_mapping"],
+            "dataset_sources": {"matches": ["models/matches.parquet"]},
+        },
+    )
+
+    assert "dataset_sources" in entity.model_dump_json(warnings="error")
+
+
+def test_project_config_rejects_obsolete_keys_with_migration_hint(tmp_path: Path) -> None:
+    (tmp_path / "project.yaml").write_text(
+        "project_slug: portable\nproject_name: Portable\nlocal_fallback_enabled: true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="Unsupported project.yaml settings.*local_fallback"):
+        load_project_config(tmp_path)
+
+
+def test_generated_project_keeps_one_runnable_cli_surface(tmp_path: Path) -> None:
+    project = scaffold_project(
+        tmp_path / "client-atlas",
+        "client-atlas",
+        with_docker=True,
+        force=False,
+    )
+
+    compose = (project / "docker-compose.yml").read_text(encoding="utf-8")
+    makefile = (project / "Makefile").read_text(encoding="utf-8")
+    project_yaml = (project / "project.yaml").read_text(encoding="utf-8")
+
+    assert "ontology-agent-api" not in compose
+    assert "ontology-agent serve" not in compose
+    assert "127.0.0.1:7687:7687" in compose
+    assert "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-ontology-password}" in compose
+    assert "$(ONTOLOGY_AGENT) launch" in makefile
+    assert "start: neo4j" in makefile
+    assert "rag/index-status.json" in makefile
+    assert "refresh: neo4j" in makefile
+    assert "Neo4j already available on 127.0.0.1:7687" in makefile
+    assert "docker compose up -d neo4j" in makefile
+    assert "$(ONTOLOGY_AGENT) launch --no-serve" in makefile
+    assert "stop:" in makefile
+    assert "docker compose stop neo4j" in makefile
+    assert "\nserve:" not in makefile
+    assert "\nci:" not in makefile
+    generated_readme = (project / "README.md").read_text(encoding="utf-8")
+    for removed_target in ["make portal", "make view", "make publish", "make reset-neo4j"]:
+        assert removed_target not in generated_readme
+    assert not (project / "scripts").exists()
+    assert not (project / "tests").exists()
+    assert not (project / "logs").exists()
+    assert not (project / "NEO4J_EXPLORE_GUIDE.md").exists()
+    assert not (project / "graph" / "bootstrap.cypher").exists()
+    for unused_section in ["runtime:", "sync:", "environment:", "extraction_mode:"]:
+        assert unused_section not in project_yaml
+
+
+def test_generated_project_without_docker_keeps_simple_native_workflow(tmp_path: Path) -> None:
+    project = scaffold_project(
+        tmp_path / "client-atlas",
+        "client-atlas",
+        with_docker=False,
+        force=False,
+    )
+
+    makefile = (project / "Makefile").read_text(encoding="utf-8")
+
+    assert "start: neo4j" in makefile
+    assert "rag/index-status.json" in makefile
+    assert "$(ONTOLOGY_AGENT) launch --no-serve" in makefile
+    assert "docker compose" not in makefile
+
+
 def test_repo_infrastructure_docs_are_showcase_ready() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     pre_commit = Path(".pre-commit-config.yaml").read_text(encoding="utf-8")
@@ -53,21 +113,18 @@ def test_repo_infrastructure_docs_are_showcase_ready() -> None:
     assert "```mermaid" in readme
     assert "MkDocs builds the documentation into `site/`" in readme
     assert "gh-pages" in readme
-    assert "uv run --extra dev ruff check ." in pre_commit
-    assert "uv run --extra dev mypy src/company_ontology_agent" in pre_commit
-    assert "uv run --extra dev pytest" in pre_commit
-    assert "uv run --extra dev mypy src/company_ontology_agent" in ci
+    assert "uv run --extra dev --extra rag ruff check ." in pre_commit
+    assert "uv run --extra dev --extra rag mypy src/company_ontology_agent" in pre_commit
+    assert "uv run --extra dev --extra rag pytest" in pre_commit
+    assert "uv run --extra dev --extra rag mypy src/company_ontology_agent" in ci
 
 
-@pytest.mark.skipif(
-    not _GRAPHIFY_RUNNABLE, reason="graphify tool not installed/runnable in this environment"
-)
-def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
+def test_cli_init_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     runner = CliRunner()
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(
         app,
-        ["init", "acme-poc", "--with-docker", "--with-markdown-wiki"],
+        ["init", "acme-poc", "--with-docker"],
     )
     assert result.exit_code == 0, result.output
     project = Path("acme-poc")
@@ -78,7 +135,6 @@ def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     gitignore = (project / ".gitignore").read_text(encoding="utf-8")
     assert ".env" in gitignore
     assert "data/raw/" in gitignore
-    assert "data/normalized/" in gitignore
     assert "data/processed/" in gitignore
     assert "portal/" in gitignore
     assert "graphify-out/**" in gitignore
@@ -87,26 +143,18 @@ def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     makefile = (project / "Makefile").read_text(encoding="utf-8")
     assert "-include .env" in makefile
     assert "check:" in makefile
-    assert "publish:" in makefile
-    assert "publish-prune:" in makefile
-    assert "data-inspect:" in makefile
-    assert "data-sample:" in makefile
-    assert "all:" in makefile
-    assert "reset-neo4j:" in makefile
+    assert "start:" in makefile
+    assert "refresh:" in makefile
+    assert "reset:" in makefile
     assert "clean-generated:" in makefile
-    assert "dry-run:" in makefile
-    assert "sync-neo4j:" in makefile
-    assert "full-stack:" in makefile
-    assert "portal:" in makefile
-    assert "view:" in makefile
-    assert "verify-visuals:" in makefile
-    assert "demo:" in makefile
-    assert "rag-index:" in makefile
-    assert "rag-evaluate:" in makefile
+    assert "evaluate:" in makefile
     assert (project / "rag" / "questions.yaml").exists()
 
     config = load_project_config(project)
     assert config.project_slug == "acme-poc"
+    # This test exercises Atlas pipeline orchestration, not the external Graphify process.
+    config.graphify.enabled = False
+    write_project_config(config, project / "project.yaml")
 
     raw = project / "data" / "raw" / "meeting.md"
     raw.write_text(
@@ -115,33 +163,30 @@ def test_cli_init_ingest_run_and_wiki(tmp_path: Path, monkeypatch) -> None:
     )
 
     monkeypatch.chdir(project)
-    ingest = runner.invoke(app, ["ingest", "./data/raw"], catch_exceptions=False)
-    assert ingest.exit_code == 0, ingest.output
-    normalized = list(Path("data/normalized").glob("*.jsonl"))
-    assert normalized
-    assert read_normalized_jsonl(normalized[0])
-
     build = runner.invoke(app, ["build-graph", "--dry-run"], catch_exceptions=False)
     assert build.exit_code == 0, build.output
     assert Path("data/processed/graph.json").exists()
-    graph_text = Path("data/processed/graph.json").read_text(encoding="utf-8")
-
     wiki = runner.invoke(app, ["export-wiki"], catch_exceptions=False)
     assert wiki.exit_code == 0, wiki.output
     assert Path("wiki/index.md").exists()
-    wiki_text = Path("wiki/index.md").read_text(encoding="utf-8")
-
     run = runner.invoke(app, ["run", "--dry-run"], catch_exceptions=False)
     assert run.exit_code == 0, run.output
-    assert "[1/4] Checking project" in run.output
-    assert "[4/4] Building graph" in run.output
-    # Re-running the pipeline is idempotent: graph and wiki stay byte-stable.
+    assert "[1/3] Checking project" in run.output
+    assert "[3/3] Building graph" in run.output
+    graph_text = Path("data/processed/graph.json").read_text(encoding="utf-8")
+    wiki_text = Path("wiki/index.md").read_text(encoding="utf-8")
+
+    rerun = runner.invoke(app, ["run", "--dry-run"], catch_exceptions=False)
+    assert rerun.exit_code == 0, rerun.output
+    # Re-running the complete pipeline is idempotent: graph and wiki stay byte-stable.
     assert Path("data/processed/graph.json").read_text(encoding="utf-8") == graph_text
     assert Path("wiki/index.md").read_text(encoding="utf-8") == wiki_text
 
     help_result = runner.invoke(app, ["--help"], catch_exceptions=False)
     assert help_result.exit_code == 0, help_result.output
-    assert "full-stack" in help_result.output
+    assert "full-stack" not in help_result.output
+    assert "ingest" not in help_result.output
+    assert "launch" in help_result.output
 
 
 def test_graph_verify_visuals_fails_without_curated_graph(tmp_path: Path, monkeypatch) -> None:
@@ -154,6 +199,13 @@ def test_graph_verify_visuals_fails_without_curated_graph(tmp_path: Path, monkey
 
     assert result.exit_code == 1
     assert "No usable curated visual graph found" in result.output
+
+
+def test_portal_rejects_network_exposure_without_explicit_flag() -> None:
+    result = CliRunner().invoke(app, ["portal", "serve", "--host", "0.0.0.0"])
+
+    assert result.exit_code != 0
+    assert "--allow-network" in result.output
 
 
 def test_import_raw_avoids_nested_raw_folder(tmp_path: Path, monkeypatch) -> None:
@@ -238,7 +290,6 @@ def test_init_can_target_hidden_project_and_import_source(tmp_path: Path, monkey
             str(source),
             "--source-profile",
             "code-docs",
-            "--with-markdown-wiki",
         ],
         catch_exceptions=False,
     )
@@ -257,6 +308,66 @@ def test_doctor_reports_without_services(tmp_path: Path, monkeypatch) -> None:
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert "project.yaml" in result.output
+
+
+def test_launch_refreshes_in_place_when_atlas_is_already_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = scaffold_project(
+        tmp_path / "client-atlas",
+        "client-atlas",
+        with_docker=False,
+        force=False,
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(
+        cli_main,
+        "_launch_port_status",
+        lambda host, port: ("atlas", "http://127.0.0.1:8765/portal/index.html"),
+    )
+
+    rebuilds: list[bool] = []
+    monkeypatch.setattr(
+        cli_main,
+        "_run_pipeline",
+        lambda **kwargs: rebuilds.append(True) or ExtractedGraph(project_slug="client-atlas"),
+    )
+    monkeypatch.setattr(cli_main, "_export_outputs", lambda *args, **kwargs: None)
+
+    result = CliRunner().invoke(app, ["launch"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "already running" in result.output
+    assert "Refreshing its graph" in result.output
+    assert rebuilds == [True]
+
+
+def test_launch_fails_before_rebuild_when_port_belongs_to_another_service(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project = scaffold_project(
+        tmp_path / "client-atlas",
+        "client-atlas",
+        with_docker=False,
+        force=False,
+    )
+    monkeypatch.chdir(project)
+    monkeypatch.setattr(
+        cli_main,
+        "_launch_port_status",
+        lambda host, port: ("occupied", "http://127.0.0.1:8765/portal/index.html"),
+    )
+
+    def unexpected_rebuild(**kwargs) -> None:
+        pytest.fail("launch rebuilt the project even though its port was occupied")
+
+    monkeypatch.setattr(cli_main, "_run_pipeline", unexpected_rebuild)
+
+    result = CliRunner().invoke(app, ["launch"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert "Port 8765 is already in use" in result.output
+    assert "--port 8766" in result.output
 
 
 def test_doctor_warns_on_nested_raw_folder(tmp_path: Path, monkeypatch) -> None:
@@ -297,9 +408,13 @@ def test_strict_doctor_allows_rebuildable_warnings() -> None:
         "neo4j credentials": True,
         "llm credentials": True,
         "neo4j connectivity": True,
+        "GraphRAG configuration": True,
+        "GraphRAG dependencies": True,
     }
 
     assert _strict_required_checks_pass(checks)
+    checks["GraphRAG configuration"] = False
+    assert not _strict_required_checks_pass(checks)
 
 
 def test_graphify_report_is_concise_by_default() -> None:
@@ -337,22 +452,3 @@ def test_predicate_normalization_maps_common_aliases() -> None:
     assert normalize_predicate("built-with") == "uses"
     assert normalize_predicate("is_required_for") == "requires"
     assert normalize_predicate("runs on") == "runs_on"
-
-
-def test_local_fallback_filters_random_tokens(tmp_path: Path) -> None:
-    normalized = tmp_path / "normalized.jsonl"
-    normalized.write_text(
-        '{"id":"r1","source_id":"s1","source_path":"docs/deploy.md",'
-        '"source_type":"markdown","title":"Deploy",'
-        '"text":"FastAPI runs with Docker and PostgreSQL. '
-        'Ignore AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk.",'
-        '"ordinal":0,"sha256":"abc"}\n',
-        encoding="utf-8",
-    )
-
-    graph = LLMStructuredExtractor().extract(normalized, "acme-poc")
-    names = {entity.name for entity in graph.entities}
-
-    assert {"FastAPI", "Docker", "PostgreSQL"}.issubset(names)
-    assert "AAB9hiomQs5DXWcRB1rqsxGUstbRroFOPPVAomNk" not in names
-    assert graph.assertions

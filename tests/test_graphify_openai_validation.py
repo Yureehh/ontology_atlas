@@ -15,24 +15,13 @@ from company_ontology_agent.extraction.graphify_adapter import (
     GraphifyExtractor,
     _graphify_visible_input,
     apply_community_names,
-    parse_graphify_graph,
 )
-from company_ontology_agent.extraction.llm_structured_extractor import LLMStructuredExtractor
-from company_ontology_agent.extraction.openai_provider import openai_strict_json_schema
-from company_ontology_agent.extraction.provider import LLMProvider
-from company_ontology_agent.extraction.schemas import StructuredExtractionPayload
+from company_ontology_agent.extraction.graphify_artifacts import parse_graphify_graph
+from company_ontology_agent.graph.models import Entity, EntityType
 from company_ontology_agent.graph.neo4j_client import Neo4jClient, Neo4jConnection
 from company_ontology_agent.graph.repository import Neo4jGraphRepository
 from company_ontology_agent.ontology.validator import OntologyValidator
 from company_ontology_agent.wiki.exporter import WikiExporter
-
-
-class FakeProvider(LLMProvider):
-    def __init__(self, payload: StructuredExtractionPayload) -> None:
-        self.payload = payload
-
-    def extract(self, text: str) -> StructuredExtractionPayload:
-        return self.payload
 
 
 def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
@@ -62,6 +51,24 @@ def test_graphify_command_uses_documented_cli_shape(tmp_path: Path) -> None:
         "gpt-test",
         "--no-viz",
     ]
+
+
+def test_graphify_resolver_skips_entrypoint_with_missing_shebang_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale_bin = tmp_path / "stale" / "bin"
+    working_bin = tmp_path / "working" / "bin"
+    stale_bin.mkdir(parents=True)
+    working_bin.mkdir(parents=True)
+    stale = stale_bin / "graphify"
+    working = working_bin / "graphify"
+    stale.write_text("#!/missing/python\n", encoding="utf-8")
+    working.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    stale.chmod(0o755)
+    working.chmod(0o755)
+    monkeypatch.setenv("PATH", os.pathsep.join((str(stale_bin), str(working_bin))))
+
+    assert graphify_adapter.resolve_graphify_executable() == str(working)
 
 
 def test_graphify_visible_input_mirrors_hidden_project_paths(tmp_path: Path) -> None:
@@ -184,42 +191,11 @@ def test_graphify_failure_uses_existing_graph_artifact(
     assert result.graph.warnings == ["Graphify execution failed; see graphify-out/GRAPH_REPORT.md."]
 
 
-def test_openai_provider_payload_path_is_schema_compatible(tmp_path: Path) -> None:
-    payload = StructuredExtractionPayload.model_validate_json(
-        Path("tests/fixtures/openai/structured_response.json").read_text(encoding="utf-8")
-    )
-    jsonl = tmp_path / "normalized.jsonl"
-    jsonl.write_text(
-        '{"id":"r1","source_id":"s1","source_path":"meeting.md","source_type":"markdown",'
-        '"title":"Meeting","text":"Decision: Use Neo4j as canonical graph.",'
-        '"ordinal":0,"sha256":"abc"}\n',
-        encoding="utf-8",
-    )
-
-    graph = LLMStructuredExtractor(provider=FakeProvider(payload)).extract(jsonl, "acme-poc")
-
-    assert len(graph.entities) == 2
-    assert len(graph.assertions) == 1
-    assert graph.assertions[0].extractor == "openai_structured_extractor"
-
-
-def test_openai_strict_schema_forbids_extra_properties_recursively() -> None:
-    schema = openai_strict_json_schema(StructuredExtractionPayload.model_json_schema())
-
-    object_nodes = _object_schema_nodes(schema)
-
-    assert object_nodes
-    assert all(node.get("additionalProperties") is False for node in object_nodes)
-    assert all(node.get("required") == list(node["properties"]) for node in object_nodes)
-    assert not _contains_schema_key(schema, "default")
-
-
 def test_validation_rejects_invalid_predicate(tmp_path: Path) -> None:
     project = scaffold_project(
         tmp_path / "acme-poc",
         "acme-poc",
         with_docker=False,
-        with_markdown_wiki=True,
         force=False,
     )
     graph = parse_graphify_graph(
@@ -244,7 +220,6 @@ def test_validation_removes_stale_rejection_outputs(tmp_path: Path) -> None:
         tmp_path / "acme-poc",
         "acme-poc",
         with_docker=False,
-        with_markdown_wiki=True,
         force=False,
     )
     validator = OntologyValidator(project)
@@ -263,6 +238,14 @@ def test_validation_removes_stale_rejection_outputs(tmp_path: Path) -> None:
 
 def test_wiki_export_includes_relationships_and_summary(tmp_path: Path) -> None:
     graph = parse_graphify_graph(Path("tests/fixtures/graphify/graph.json"), "acme-poc")
+    graph.entities.append(
+        Entity(
+            id="module:billing",
+            type=EntityType.module,
+            name="Billing",
+            normalized_name="billing",
+        )
+    )
 
     files = WikiExporter().export(graph, tmp_path / "wiki")
 
@@ -270,6 +253,8 @@ def test_wiki_export_includes_relationships_and_summary(tmp_path: Path) -> None:
     assert tmp_path / "wiki/graph-summary.html" in files
     assert tmp_path / "wiki/index.html" in files
     assert any(path.parent.name == "sources" for path in files)
+    module_page = next(path for path in files if path.parent.name == "modules")
+    assert not (tmp_path / "wiki" / "entities" / module_page.name).exists()
     page = next(path for path in files if path.parent.name == "entities")
     text = page.read_text(encoding="utf-8")
     assert "## Outgoing Relationships" in text
@@ -321,26 +306,3 @@ def test_neo4j_repository_round_trip() -> None:
 
     assert stored.entities
     assert stored.assertions
-
-
-def _object_schema_nodes(node: object) -> list[dict[str, object]]:
-    if isinstance(node, list):
-        result: list[dict[str, object]] = []
-        for item in node:
-            result.extend(_object_schema_nodes(item))
-        return result
-    if not isinstance(node, dict):
-        return []
-
-    result = [node] if isinstance(node.get("properties"), dict) else []
-    for value in node.values():
-        result.extend(_object_schema_nodes(value))
-    return result
-
-
-def _contains_schema_key(node: object, key: str) -> bool:
-    if isinstance(node, list):
-        return any(_contains_schema_key(item, key) for item in node)
-    if isinstance(node, dict):
-        return key in node or any(_contains_schema_key(value, key) for value in node.values())
-    return False

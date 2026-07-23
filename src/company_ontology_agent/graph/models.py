@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 
 
 class EntityType(StrEnum):
@@ -81,7 +81,7 @@ class Entity(BaseModel):
     extraction_source: str = "local_fallback"
     confidence_tier: str = "extracted"
     description: str | None = None
-    metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class Assertion(BaseModel):
@@ -106,7 +106,7 @@ class Assertion(BaseModel):
     extraction_source: str = "local_fallback"
     confidence_tier: str = "extracted"
     evidence_text: str | None = None
-    metadata: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    metadata: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 class ExtractedGraph(BaseModel):
@@ -135,11 +135,7 @@ def entity_graph_kind(entity: Entity) -> str:
 
     Single source of truth shared by the portal and wiki so the two layers never drift.
     """
-    if (
-        entity.type == EntityType.business_entity
-        or entity.extraction_source == "structured_connector"
-        or entity.metadata.get("connector")
-    ):
+    if entity.extraction_source == "structured_connector" or entity.metadata.get("connector"):
         return "data"
     return "repo"
 

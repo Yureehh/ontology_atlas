@@ -5,16 +5,14 @@ build-backend = "uv_build"
 [project]
 name = "company-ontology-agent"
 version = "0.1.0"
-description = "Local-first company ontology agent asset"
+description = "Answer-first enterprise knowledge and impact-analysis accelerator"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
 dependencies = [
   "graphifyy[openai,neo4j,pdf]>=0.8.38,<0.9.0",
   "markdown-it-py>=3.0",
   "neo4j>=5.20",
-  "openai>=1.51.1,<2",
   "pydantic>=2.7",
-  "pypdf>=4.2",
   "pyshacl>=0.26",
   "pyyaml>=6.0",
   "rdflib>=7.0",
@@ -24,7 +22,9 @@ dependencies = [
 [project.optional-dependencies]
 rag = [
   "fastapi>=0.115,<1.0",
-  "neo4j-graphrag[openai]>=1.17,<2",
+  # <1.19: Neo4jVectorCypherRetriever patches private attrs for filtered search
+  # (see retrieval/graphrag.py); re-verify project isolation before raising this cap.
+  "neo4j-graphrag[openai]>=1.17,<1.19",
   "uvicorn>=0.34,<1.0",
 ]
 parquet = [
@@ -67,4 +67,10 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
   "neo4j: tests requiring a live Neo4j database",
+]
+filterwarnings = [
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated.*:starlette.exceptions.StarletteDeprecationWarning:fastapi.testclient",
+  "ignore:Dataset.default_context is deprecated.*:DeprecationWarning:pyshacl.*",
+  "ignore:Dataset.default_context is deprecated.*:DeprecationWarning:rdflib.graph",
+  "ignore:The default returned 'id' field in the search results will be removed.*:DeprecationWarning:neo4j_graphrag.retrievers.vector",
 ]

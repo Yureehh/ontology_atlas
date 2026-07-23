@@ -7,8 +7,8 @@ from company_ontology_agent.config.settings import runtime_settings
 from company_ontology_agent.extraction.graphify_adapter import (
     GraphifyExtractor,
     apply_community_names,
-    parse_graphify_graph,
 )
+from company_ontology_agent.extraction.graphify_artifacts import parse_graphify_graph
 from company_ontology_agent.graph.bootstrap import write_bootstrap_files
 from company_ontology_agent.graph.neo4j_client import Neo4jClient, Neo4jConnection
 from company_ontology_agent.graph.visuals import summarize_visual_graph
@@ -48,7 +48,12 @@ def graph_bootstrap(dry_run: bool = typer.Option(False, "--dry-run")) -> None:
 
 
 @graph_app.command("reset")
-def graph_reset(yes: bool = typer.Option(False, "--yes")) -> None:
+def graph_reset(
+    yes: bool = typer.Option(False, "--yes"),
+    all_projects: bool = typer.Option(
+        False, "--all", help="Wipe the ENTIRE Neo4j database, not just this project."
+    ),
+) -> None:
     if not yes:
         typer.echo("Refusing to reset Neo4j without --yes.")
         raise typer.Exit(code=1)
@@ -69,10 +74,14 @@ def graph_reset(yes: bool = typer.Option(False, "--yes")) -> None:
         )
     )
     try:
-        client.reset_database()
+        if all_projects:
+            client.reset_database()
+        else:
+            client.reset_project(config.project_slug)
     finally:
         client.close()
-    typer.echo("Neo4j database reset complete.")
+    scope = "database" if all_projects else f"project '{config.project_slug}'"
+    typer.echo(f"Neo4j reset complete: {scope}.")
 
 
 @graph_app.command("prune")

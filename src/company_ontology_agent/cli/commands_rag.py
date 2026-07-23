@@ -4,7 +4,12 @@ import typer
 
 from company_ontology_agent.config.project_config import find_project_root
 from company_ontology_agent.retrieval.evaluation import evaluate_questions, load_questions
-from company_ontology_agent.retrieval.runtime import ask_project, get_rag_status, index_project
+from company_ontology_agent.retrieval.runtime import (
+    ask_project,
+    create_rag_runtime,
+    get_rag_status,
+    index_project,
+)
 
 rag_app = typer.Typer(help="Index and query the Neo4j GraphRAG knowledge layer.")
 
@@ -33,11 +38,11 @@ def rag_status() -> None:
 def rag_evaluate() -> None:
     root = find_project_root()
     questions = load_questions(root / "rag" / "questions.yaml")
-    report = evaluate_questions(
-        questions,
-        lambda question: ask_project(root, question),
-        project_root=root,
-    )
+    runtime = create_rag_runtime(root)
+    try:
+        report = evaluate_questions(questions, runtime.ask, project_root=root)
+    finally:
+        runtime.close()
     output = root / "rag" / "evaluation.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(report.model_dump_json(indent=2), encoding="utf-8")

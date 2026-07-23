@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 FLAGSHIP_QUESTIONS = (
-    "Which systems are affected if Customer Profile changes?",
-    "What evidence supports this dependency?",
-    "Which source is authoritative?",
+    "Which components have the most downstream dependencies?",
+    "Which datasets are authoritative?",
+    "Where is ownership or evidence missing?",
 )
 
 NO_ANSWER_QUESTION = (

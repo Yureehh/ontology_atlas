@@ -55,14 +55,17 @@ Graphify outputs remain intermediate artifacts under:
 ```text
 graphify-out/
 ├── graph.json
+├── graph.html
+├── graph.raw.html
 ├── GRAPH_TREE.html
 ├── GRAPH_REPORT.md
 ├── cache/
 └── cypher.txt
 ```
 
-`graph.html` is disabled by default. It duplicated Explore and its physics layout became
-resource-heavy on large corpora. Use Ontology Atlas Explore for the client-facing graph.
+Atlas rewrites `graph.html` as a bounded 20–40-community Code & docs map and preserves Graphify's
+dense original as `graph.raw.html`. Neither is the fused graph with business data. Set
+`graphify.no_viz: true` for CI or very large runs; use Explore for the canonical product view.
 
 ## Canonical Graph Rule
 
@@ -89,7 +92,7 @@ graphify:
   backend: openai
   mode: deep
   update: true
-  no_viz: true
+  no_viz: false
   timeout_seconds: null
   auto_name_communities: true
 ```
@@ -115,13 +118,14 @@ Use this when you want to test the semantic source graph without Neo4j:
 ```bash
 cd /path/to/repo/.ontology-agent
 ontology-agent doctor
-ontology-agent ingest ./data/raw
 ontology-agent graphify run
 ontology-agent graphify cluster
 ontology-agent graphify tree
+open graphify-out/graph.html
+open graphify-out/graph.raw.html
 open graphify-out/GRAPH_TREE.html
 open graphify-out/GRAPH_REPORT.md
 ```
 
 This validates Graphify extraction and reporting only. To build the curated ontology
-projection, run `make check` for local dry-run output or `make publish-prune` for Neo4j.
+projection, run `make check` for local dry-run output or `make refresh` for Neo4j.

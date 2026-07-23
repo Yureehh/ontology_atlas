@@ -9,20 +9,21 @@ From a cloned repo:
 
 ```bash
 cd /path/to/ontology_atlas
-uv tool install --force .
+uv tool install --force '.[rag]'
 ontology-agent --help
 ```
 
-For Parquet datasets, install the optional extra:
+This installs the complete answer-first product, including Neo4j GraphRAG and the local
+portal server. For Parquet datasets, add both extras:
 
 ```bash
-uv tool install --force '.[parquet]'
+uv tool install --force '.[rag,parquet]'
 ```
 
 From a wheel or GitLab artifact:
 
 ```bash
-uv tool install --force company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ontology-agent --help
 ```
 
@@ -56,14 +57,14 @@ From a cloned repo:
 
 ```powershell
 cd C:\path\to\ontology_atlas
-uv tool install --force .
+uv tool install --force '.[rag]'
 ontology-agent --help
 ```
 
 From a wheel or GitLab artifact:
 
 ```powershell
-uv tool install --force .\company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force '.\company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ontology-agent --help
 ```
 
@@ -94,14 +95,14 @@ $env:USERPROFILE\.local\bin
 Inside an activated virtualenv:
 
 ```bash
-pip install .
+pip install '.[rag]'
 ontology-agent --help
 ```
 
 For a global CLI using the pip ecosystem:
 
 ```bash
-pipx install .
+pipx install '.[rag]'
 ontology-agent --help
 ```
 
@@ -110,14 +111,14 @@ ontology-agent --help
 Use this only when developing the package itself:
 
 ```bash
-uv sync --extra dev
-uv run --extra dev ontology-agent --help
+uv sync --extra dev --extra rag
+uv run --extra dev --extra rag ontology-agent --help
 ```
 
 ## Notes For Teams
 
 Every colleague needs `ontology-agent` on their own machine. If they install with
-`uv tool install --force .` and UV warns that the tool directory is not on PATH, they
+`uv tool install --force '.[rag]'` and UV warns that the tool directory is not on PATH, they
 must run `uv tool update-shell` once.
 
 Generated project Makefiles assume `ontology-agent` is callable from PATH. They do not

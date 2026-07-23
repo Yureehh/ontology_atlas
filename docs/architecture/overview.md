@@ -51,7 +51,8 @@ A future FastAPI adapter (not currently shipped) would parse HTTP requests and c
 workflow functions — the core engine is deliberately kept independent of any web framework so
 such an adapter can be added without duplicating business logic.
 
-Docker Compose is generated as runtime support for local Neo4j. It does not define business logic.
+When requested, Docker Compose starts only local Neo4j. The installed `ontology-agent` CLI
+serves the portal directly, so generated projects do not contain a second application runtime.
 
 ## Core Responsibilities
 

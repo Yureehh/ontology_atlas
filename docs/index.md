@@ -27,15 +27,13 @@ ontology-agent init slidesmith-poc \
   --target .ontology-agent \
   --source . \
   --source-profile code-docs \
-  --with-markdown-wiki \
   --force
 cd .ontology-agent
-make demo
+make start
 ```
 
-Use `make check` for local validation without writing to Neo4j. Use `make publish-prune`
-for the canonical Neo4j graph, safe stale marking, and final wiki. Use `make demo`
-when preparing the manager-facing portal and Neo4j exploration pack.
+Use `make check` for local validation without writing to Neo4j. Use `make refresh` after source
+or data changes and `make evaluate` to run the project-specific retrieval suite.
 
 ## Documentation Map
 

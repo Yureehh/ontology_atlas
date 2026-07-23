@@ -8,7 +8,6 @@ The generated `project.yaml` defaults to:
 
 ```yaml
 graph:
-  backend: neo4j
   uri: bolt://localhost:7687
   uri_env: NEO4J_URI
   database: neo4j
@@ -131,7 +130,7 @@ right panel, set node text/caption to `caption` for these labels:
 - `File`
 
 Then open `graph/explore.cypher` from the generated project and paste query 1 for
-the curated graph. `NEO4J_EXPLORE_GUIDE.md` contains the same guidance in the project.
+the curated graph. The generated `graph/explore.cypher` file contains the diagnostic queries.
 
 If Explore shows only `Project`, `Source`, or `SourceSpan`, nothing is necessarily wrong.
 Those are provenance labels. The curated demo graph is the entity-to-entity projection

@@ -1,5 +1,5 @@
-site_name: Company Ontology Agent
-site_description: Local-first company asset for project ontology graphs and generated knowledge wikis
+site_name: Ontology Atlas
+site_description: Answer-first enterprise knowledge and impact analysis across code, documents, and data
 repo_url: ""
 theme:
   name: material
@@ -36,7 +36,7 @@ nav:
       - Pipeline: architecture/pipeline.md
       - Portal: architecture/portal.md
       - Graph Intelligence: architecture/graph-intelligence.md
-      - GraphRAG Readiness: architecture/graph-rag.md
+      - Neo4j GraphRAG: architecture/graph-rag.md
   - Reference:
       - CLI: reference/cli.md
       - Configuration: reference/configuration.md

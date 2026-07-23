@@ -28,10 +28,12 @@ NEO4J_PASSWORD=...
 
 These values override `project.yaml` at runtime. Secrets must stay in `.env` or the shell environment and must not be committed.
 
-## Optional
+## Required For GraphRAG
 
 ```bash
 ONTOLOGY_AGENT_EMBEDDING_MODEL=...
 ```
 
-Embeddings are reserved for later retrieval work. V1 does not require them for graph construction.
+The embedding model's output size must match `embedding.dimension` in `project.yaml`.
+Graph construction does not require embeddings, but `rag index` and live Ask do. GraphRAG
+also uses `OPENAI_API_KEY` and `ONTOLOGY_AGENT_LLM_MODEL` for answer generation.

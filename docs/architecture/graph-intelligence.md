@@ -28,7 +28,7 @@ the curated graph — **no extra LLM calls, no tokens**.
   (same subject-predicate-object), self-loops, and multi-edge pairs. A quick trust signal.
 - **Community cohesion** — every community with its size and cohesion score.
 - **Explore artifacts** — links to Graphify's own `GRAPH_TREE.html` and `GRAPH_REPORT.md`
-  (the standalone `graph.html` is intentionally not linked — it freezes on large graphs).
+  (`graph.html` is linked only as a raw code/document diagnostic when generated).
 
 ## Design note: in-process vs shelling out
 

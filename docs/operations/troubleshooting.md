@@ -33,9 +33,9 @@ This is not fatal unless `graphify.strict` is true.
 Reinstall the ontology agent package so `graphifyy[openai,neo4j,pdf]` is installed in the same virtual environment:
 
 ```bash
-cd /Users/yureeh/Documents/ontology_atlas
+cd /path/to/ontology_atlas
 uv build
-uv tool install --force dist/company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'dist/company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ```
 
 Then check:
@@ -66,7 +66,7 @@ ontology-agent export-wiki --neo4j
 For development, use:
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra rag
 PYTHONPATH=src uv run ontology-agent --help
 ```
 
@@ -74,7 +74,7 @@ For a company asset install test, use a UV tool install:
 
 ```bash
 uv build
-uv tool install --force dist/company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'dist/company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ontology-agent --help
 ```
 

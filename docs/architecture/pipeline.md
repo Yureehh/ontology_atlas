@@ -33,18 +33,19 @@ Ingestion converts supported source files into normalized JSONL records. Each re
 
 ## Extraction
 
-The extraction interface is `KGExtractor`.
+`GraphifyExtractor` owns source extraction; structured connectors project directly into the
+same `ExtractedGraph` model before validation and resolution.
 
 Current implementations:
 
-- `GraphifyExtractor`: primary demo-quality adapter that shells out to `graphify`.
-- `LLMStructuredExtractor`: OpenAI structured extraction when `llm.provider=openai`.
+- `GraphifyExtractor`: code/document adapter that shells out to `graphify`.
 - Structured connectors: authoritative facts from CSV, JSON, JSONL, Parquet, SQLite,
   and PostgreSQL/Aurora-style sources.
+- Bounded semantic enrichment: aligns extracted architecture with existing domain
+  summaries and adds provenance-backed relationships only.
 
-Deterministic local fallback and ontology projection are opt-in debug modes. They are
-disabled by default because hardcoded technology/module heuristics do not scale as a
-real company asset.
+No second raw-text LLM extraction pass runs over the same files, and semantic enrichment
+cannot create row-level business entities.
 
 ## Validation
 

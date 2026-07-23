@@ -17,7 +17,6 @@ Use this when you want to validate extraction and Graphify artifacts without Neo
 ```bash
 cd /path/to/repo/.ontology-agent
 ontology-agent doctor
-ontology-agent ingest ./data/raw
 ontology-agent graphify run
 ontology-agent graphify cluster
 ontology-agent graphify tree
@@ -29,6 +28,7 @@ Expected outputs:
 
 ```text
 graphify-out/graph.json
+graphify-out/graph.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
 ```
@@ -43,14 +43,11 @@ Use this as the default no-Neo4j check.
 ```bash
 cd /path/to/repo/.ontology-agent
 make check
-make portal
-make view
 ```
 
 Expected outputs:
 
 ```text
-data/normalized/*.jsonl
 data/processed/graph.json
 data/processed/rejected/summary.md
 wiki/index.md
@@ -60,24 +57,23 @@ portal/ask.html
 portal/explore.html
 portal/intelligence.html
 portal/changes.html
-portal/trust.html
 portal/graph.json
 ```
 
-`make view` serves the local portal. Without a populated Neo4j GraphRAG index, Ask reports its
+Use `ontology-agent portal serve` to serve the local portal. Without a populated Neo4j GraphRAG index, Ask reports its
 readiness state while Explore remains available. `index.html` redirects to Ask.
 
-## Oracle Bets Clean Manager Demo
+## Clean Client Demo
 
-Use this when preparing a fresh Oracle Bets recording or manager presentation. It
+Use this when preparing a fresh client recording or leadership presentation. It
 intentionally removes rebuildable generated artifacts and resets the local demo Neo4j
 database.
 
 ```bash
-cd /Users/yureeh/Documents/ontology_atlas
-uv tool install --force '.[parquet]'
+cd /path/to/ontology_atlas
+uv tool install --force '.[rag,parquet]'
 
-cd /Users/yureeh/dev/oracle_bets/.ontology-agent
+cd /path/to/client/.ontology-agent
 make doctor
 ontology-agent data inspect
 make clean-generated
@@ -103,13 +99,12 @@ wiki/data-graph.html
 wiki/graph-summary.html
 graphify-out/GRAPH_TREE.html
 graphify-out/GRAPH_REPORT.md
+graphify-out/graph.html
 graph/explore.cypher
-NEO4J_EXPLORE_GUIDE.md
 ```
 
-The Oracle Bets demo should keep `ontology_projection_enabled: false` and
-`local_fallback_enabled: false`. The trusted data story comes from Graphify/OpenAI
-source evidence plus explicit Parquet/SQLite dataset mappings.
+Client demos should keep `ontology_projection_enabled: false`. The trusted data story comes from
+Graphify source evidence plus explicit authoritative structured-dataset mappings.
 
 ## Neo4j End-To-End Test
 
@@ -198,7 +193,7 @@ RETURN labels(n) AS labels, n.name AS name, n.id AS id
 LIMIT 50;
 ```
 
-The generated project also includes `graph/explore.cypher` and `NEO4J_EXPLORE_GUIDE.md`.
+The generated project includes `graph/explore.cypher` for expert/debug use.
 Use those for demos.
 
 ## Structured Data Connector Smoke Test
@@ -232,16 +227,16 @@ wiki/datasets/data-reply-people.md
 Run this before calling a release or demo branch ready:
 
 ```bash
-uv sync --extra dev
-uv run --extra dev pytest
-uv run --extra dev ruff check .
-uv run --extra dev mypy src/company_ontology_agent
-uv run --extra dev mkdocs build --strict
+uv sync --extra dev --extra rag
+uv run --extra dev --extra rag pytest
+uv run --extra dev --extra rag ruff check .
+uv run --extra dev --extra rag mypy src/company_ontology_agent
+uv run --extra dev --extra rag mkdocs build --strict
 uv build
 ```
 
 Pre-commit runs the fast local subset:
 
 ```bash
-uv run --extra dev pre-commit run --all-files
+uv run --extra dev --extra rag pre-commit run --all-files
 ```

@@ -7,23 +7,12 @@ Each generated project uses `project.yaml` as its central configuration.
 ```yaml
 project_slug: manomano-poc
 project_name: ManoMano POC Ontology
-environment: local
-```
-
-## Runtime
-
-```yaml
-runtime:
-  backend: local
-  metadata_store: sqlite
-  raw_store: local_filesystem
 ```
 
 ## Graph
 
 ```yaml
 graph:
-  backend: neo4j
   uri: bolt://localhost:7687
   uri_env: NEO4J_URI
   database: neo4j
@@ -52,11 +41,9 @@ graphify:
   backend: openai
   mode: deep
   update: true
-  no_viz: true
+  no_viz: false
   strict: false
 ```
-
-`push_to_neo4j` defaults to false because Graphify output is intermediate, not canonical.
 
 `update: true` enables the cheap incremental path: when a prior extraction exists, `run` calls
 `graphify update` (re-extracts only changed code, no LLM cost) instead of a full `extract`.
@@ -70,7 +57,6 @@ llm:
   provider: local
   model_env: ONTOLOGY_AGENT_LLM_MODEL
   api_key_env: OPENAI_API_KEY
-  extraction_mode: strict_json_schema
 ```
 
 Use `provider: openai` with `OPENAI_API_KEY` and `ONTOLOGY_AGENT_LLM_MODEL` for structured extraction. Use `provider: local` for deterministic fallback extraction.
@@ -84,43 +70,37 @@ embedding:
   dimension: 1536
 rag:
   enabled: true
-  top_k: 8
+  top_k: 4
   max_hops: 2
+  analytics:
+    enabled: true
+    text2cypher_local: true
+    max_hops: 3
+    max_rows: 100
+    timeout_seconds: 5
 ```
 
 `top_k` controls semantic candidates. `max_hops` controls the fixed graph neighborhood and
 is capped at three. The model output dimension must match `embedding.dimension`. GraphRAG v1
-requires OpenAI plus the optional `rag` package extra.
+requires OpenAI plus the optional `rag` package extra. Deterministic analytics uses fixed,
+parameterized query shapes. `text2cypher_local` enables the validated expert fallback only on a
+loopback server; exposing the portal to a network disables it automatically.
+
+Unknown configuration keys are rejected with a migration message instead of being silently ignored.
 
 ## Ontology
 
 ```yaml
 ontology:
-  version: 0.1.0
   core_path: ./ontology/core.ttl
   shapes_path: ./ontology/shapes.ttl
-  mappings_path: ./ontology/mappings.yaml
-  validation_mode: strict
 ```
 
 ## Wiki
 
 ```yaml
 wiki:
-  enabled: true
   output_path: ./wiki
-  format: markdown
-  include_frontmatter: true
-```
-
-## Sources
-
-```yaml
-sources:
-  - name: local_docs
-    type: folder
-    path: ./data/raw
-    enabled: true
 ```
 
 ## Structured Datasets
@@ -149,8 +129,8 @@ datasets:
     required_columns: [record_id, prediction]
 ```
 
-Datasets are optional. When configured, `ontology-agent run`, `make check`, and
-`make publish` process them automatically. Mappings are domain-agnostic and can model
+Datasets are optional. When configured, `ontology-agent launch`, `ontology-agent run`, and
+`make check` process them automatically. Mappings are domain-agnostic and can model
 people, claims, customers, assets, policies, decisions, evaluations, or any other
 structured business data.
 
@@ -168,15 +148,13 @@ datasets:
 
 ## Extraction Defaults
 
-Graphify/OpenAI and structured connectors are the product-quality extraction path.
-Local deterministic fallback and ontology projection are opt-in debug modes:
+Graphify and structured connectors are the product-quality extraction path. The optional
+ontology projection remains an expert debug mode:
 
 ```yaml
 extraction:
   ontology_projection_enabled: false
-  local_fallback_enabled: false
 ```
 
 Set `llm.provider: openai` with `OPENAI_API_KEY` and `ONTOLOGY_AGENT_LLM_MODEL` for
-OpenAI structured extraction. Set `local_fallback_enabled: true` only when you
-explicitly want offline heuristic extraction.
+Graphify semantic extraction and GraphRAG answer generation.

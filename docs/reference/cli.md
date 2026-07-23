@@ -4,6 +4,22 @@ This is the canonical guide for available `ontology-agent` commands and what eac
 does. For generated ontology projects, the local `Makefile` wraps the most common
 commands for daily use.
 
+## `ontology-agent launch`
+
+```bash
+ontology-agent launch
+ontology-agent launch --no-serve
+ontology-agent launch --full
+```
+
+This is the primary client workflow. It validates configuration, incrementally extracts code and
+documents, loads deterministic business data, validates and resolves one canonical graph,
+publishes project-scoped changes to Neo4j, incrementally indexes compact retrieval summaries,
+builds the four-page workspace, and serves it on `127.0.0.1`.
+
+`--no-serve` performs the same single build for CI or an offline handoff. `--full` deliberately
+re-runs the cost-bearing Graphify extraction. Expert commands below remain useful for diagnosis.
+
 ## `ontology-agent init`
 
 ```bash
@@ -13,7 +29,6 @@ ontology-agent init <project_slug> \
   --source /path/to/repo \
   --source-profile code-docs \
   --with-docker \
-  --with-markdown-wiki \
   --force
 ```
 
@@ -30,8 +45,9 @@ ontology-agent run --neo4j --prune stale
 ontology-agent run --full          # force full re-extraction (LLM cost)
 ```
 
-`run --neo4j --prune stale` is the recommended one-step manager-demo publish command.
-It runs Graphify/OpenAI extraction, automatic community naming, structured connectors,
+`run --neo4j --prune stale` is the expert publish command used when individual stages need
+diagnosis.
+It runs Graphify extraction, automatic community naming, structured connectors,
 validation, Neo4j writes, wiki export, and portal build.
 
 **Incremental by default.** When a prior Graphify extraction exists, `run` refreshes it
@@ -42,10 +58,9 @@ to force a from-scratch re-extraction (e.g. after large document changes). See
 Runs the normal project workflow with progress logs:
 
 ```text
-[1/4] Checking project
-[2/4] Ingesting data/raw
-[3/4] Running Graphify
-[4/4] Building graph
+[1/3] Checking project
+[2/3] Running Graphify
+[3/3] Building graph
 ```
 
 `--dry-run` writes to the local JSON repository and exports wiki markdown from it.
@@ -57,34 +72,6 @@ JSON validation snapshot.
 
 `--prune stale` marks generated Neo4j nodes/relationships missing from the current graph
 as superseded. Use `graph prune --mode delete --yes` only for destructive cleanup.
-
-## `ontology-agent full-stack`
-
-```bash
-ontology-agent full-stack
-```
-
-Runs `run --dry-run` first, then `run --neo4j`. Use this when you want one command that validates the local path, writes the canonical Neo4j graph, and exports the final wiki.
-
-## `ontology-agent demo`
-
-```bash
-ontology-agent demo
-ontology-agent demo --dry-run
-```
-
-Runs validation, Neo4j publish, optional GraphRAG indexing, portal build, and the three
-flagship impact/evidence questions. It prints the generated portal, wiki, and diagnostics.
-
-`--dry-run` skips Neo4j and uses the local JSON graph for the portal and wiki.
-
-## `ontology-agent ingest`
-
-```bash
-ontology-agent ingest ./data/raw
-```
-
-Normalizes supported files into `data/normalized/*.jsonl`.
 
 ## `ontology-agent import-raw`
 
@@ -137,12 +124,12 @@ ontology-agent portal serve --port 8765
 ```
 
 Builds or serves the static local demo portal under `portal/`. The build emits sibling
-pages that share one renderer: Ask, Explore, Insights, Changes, and Trust. Explore filters
-one combined graph into All, Architecture, and Business data layers. The old `repo.html`
-and `data-graph.html` URLs remain compatibility redirects.
+pages that share one renderer: Ask, Explore, Insights, and Changes. Explore filters
+one combined graph into All, Architecture, and Business data layers.
 
 `portal serve` binds to `127.0.0.1` by default, serves static project assets, and exposes
 the read-only GraphRAG API. Ask requires the server; Explore remains usable through `file://`.
+Non-loopback binding is rejected unless `--allow-network` is supplied explicitly.
 
 ## `ontology-agent rag`
 
@@ -159,8 +146,8 @@ returns the same typed JSON contract used by the portal API: answer, trace ID, c
 entities, paths, evidence tiers, scores, warnings, and timings.
 
 `evaluate` runs `rag/questions.yaml`, reports citation validity, expected-entity/source
-retrieval, no-answer refusal, latency, and failures, then saves `rag/evaluation.json` for
-the Trust page.
+relationship retrieval, no-answer refusal, latency, and failures, then saves
+`rag/evaluation.json` for review and CI reporting.
 
 ## `ontology-agent doctor`
 
@@ -169,7 +156,9 @@ ontology-agent doctor
 ontology-agent doctor --strict
 ```
 
-Checks project files, ontology files, Graphify availability, Docker availability, Neo4j credentials, and LLM credentials.
+Checks project files, ontology files, Graphify, Neo4j credentials/connectivity, LLM
+credentials, and—when enabled—GraphRAG configuration and installed dependencies. Docker is
+reported as an optional convenience.
 
 `--strict` exits non-zero when required project, credential, or connectivity checks fail.
 
@@ -211,7 +200,7 @@ ontology-agent graph verify-visuals --neo4j
 ```
 
 Reports curated entity and relationship counts. It exits non-zero when the graph only
-contains provenance-style data and is not useful for the manager demo.
+contains provenance-style data and is not useful for the client demo.
 
 ## `ontology-agent graphify run`
 

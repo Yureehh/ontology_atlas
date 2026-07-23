@@ -18,7 +18,7 @@ and SQL tables are authoritative structured facts and should use connectors plus
 Parquet is optional to keep the base asset lightweight:
 
 ```bash
-uv tool install --force '.[parquet]'
+uv tool install --force '.[rag,parquet]'
 ```
 
 PostgreSQL/Aurora uses an environment variable for the database URL and requires selected

@@ -15,7 +15,7 @@ ontology-agent portal build --dry-run
 ```
 
 Open `portal/index.html`. Ask will explain that live answers are unavailable, while Explore,
-Insights, Changes, and Trust remain useful offline.
+Insights and Changes remain useful offline.
 
 ## Live cited answers
 
@@ -28,18 +28,18 @@ ontology-agent portal serve --port 8765
 
 Open `http://127.0.0.1:8765/portal/index.html`.
 
-The navigation is **Ask, Explore, Insights, Changes, Trust**. Explore is a single graph with
-All, Architecture, and Business data filters. The old `repo.html` and `data-graph.html` URLs
-redirect to those filters for compatibility.
+The navigation is **Ask, Explore, Insights, Changes**. Explore is a single graph with
+All, Architecture, and Business data filters.
 
 Structured connector facts are authoritative. Graphify/OpenAI claims retain evidence text,
 source path, confidence, and extractor. Ask carries those distinctions into citations and
 refuses when retrieval finds no support.
 
-`GRAPH_TREE.html` and `GRAPH_REPORT.md` appear only under Trust diagnostics. Graphify's
-standalone `graph.html` is disabled and is not part of the shareable output.
+`graph.html`, `GRAPH_TREE.html`, and `GRAPH_REPORT.md` appear only as secondary Explore
+diagnostics. The raw Graphify map contains code and documents only; it is not the fused canonical
+graph and contains no structured business data.
 
-## Trust and evaluation
+## Evaluation
 
 Customize the generated `rag/questions.yaml`, then run:
 
@@ -48,8 +48,8 @@ ontology-agent rag evaluate
 ontology-agent portal build --neo4j
 ```
 
-Trust will show graph quality, source coverage, rejected assertions, vector-index freshness,
-stale cleanup counts, and the evaluation report.
+The command reports citation validity, expected retrieval, refusal accuracy, latency, and
+case-level failures, and saves the result to `rag/evaluation.json`.
 
 ## Wiki contents
 

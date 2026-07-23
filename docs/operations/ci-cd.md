@@ -11,11 +11,11 @@ V1 includes a GitHub Actions workflow:
 The quality job runs:
 
 ```bash
-uv sync --extra dev
-uv run --extra dev pytest
-uv run --extra dev ruff check .
-uv run --extra dev mypy src/company_ontology_agent
-uv run --extra dev mkdocs build --strict
+uv sync --extra dev --extra rag
+uv run --extra dev --extra rag pytest
+uv run --extra dev --extra rag ruff check .
+uv run --extra dev --extra rag mypy src/company_ontology_agent
+uv run --extra dev --extra rag python -m mkdocs build --strict
 uv build
 ```
 
@@ -34,11 +34,11 @@ Local Neo4j Desktop remains the recommended manual V1 E2E target.
 From the repository root:
 
 ```bash
-uv sync --extra dev
-uv run --extra dev pytest
-uv run --extra dev ruff check .
-uv run --extra dev mypy src/company_ontology_agent
-uv run --extra dev mkdocs build --strict
+uv sync --extra dev --extra rag
+uv run --extra dev --extra rag pytest
+uv run --extra dev --extra rag ruff check .
+uv run --extra dev --extra rag mypy src/company_ontology_agent
+uv run --extra dev --extra rag mkdocs build --strict
 uv build
 ```
 

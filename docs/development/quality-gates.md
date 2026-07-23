@@ -5,31 +5,31 @@ The project uses UV for dependency and command execution.
 ## Install
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra rag
 ```
 
 ## Tests
 
 ```bash
-uv run --extra dev pytest
+uv run --extra dev --extra rag pytest
 ```
 
 ## Lint
 
 ```bash
-uv run --extra dev ruff check .
+uv run --extra dev --extra rag ruff check .
 ```
 
 ## Type Check
 
 ```bash
-uv run --extra dev mypy src/company_ontology_agent
+uv run --extra dev --extra rag mypy src/company_ontology_agent
 ```
 
 ## Documentation
 
 ```bash
-uv run --extra dev mkdocs build --strict
+uv run --extra dev --extra rag python -m mkdocs build --strict
 ```
 
 ## Package Build
@@ -53,7 +53,7 @@ make check
 Install local hooks with:
 
 ```bash
-uv run --extra dev pre-commit install
+uv run --extra dev --extra rag pre-commit install
 ```
 
 The hook runs Ruff, mypy, and pytest. Run the full quality gate, including MkDocs and
@@ -63,7 +63,7 @@ The hook runs Ruff, mypy, and pytest. Run the full quality gate, including MkDoc
 
 ```bash
 uv build
-uv tool install --force dist/company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'dist/company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ontology-agent --help
 ```
 
@@ -82,8 +82,12 @@ project with:
 
 ```bash
 make check
-make publish-prune
-make verify-visuals
+make refresh
+make evaluate
 ```
 
 The Neo4j commands require a running local Neo4j Desktop DBMS.
+
+Pytest narrowly filters two upstream deprecations emitted by the current FastAPI/Starlette test
+adapter and pySHACL/RDFLib integration. Product warnings remain visible; remove these filters when
+those dependencies complete their published migrations.

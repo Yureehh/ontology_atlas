@@ -1,4 +1,4 @@
-# OpenAI Extraction
+# OpenAI Extraction And GraphRAG
 
 V1 includes an OpenAI provider behind the `LLMProvider` protocol.
 
@@ -45,3 +45,19 @@ normalized text
 If `llm.provider=openai` and either `OPENAI_API_KEY` or `ONTOLOGY_AGENT_LLM_MODEL` is missing, graph build fails clearly.
 
 If you want no external LLM calls, keep `llm.provider=local`.
+
+## GraphRAG
+
+The live Ask workspace requires OpenAI for embeddings and answer generation:
+
+```yaml
+llm:
+  provider: openai
+embedding:
+  provider: openai
+rag:
+  enabled: true
+```
+
+Set `ONTOLOGY_AGENT_EMBEDDING_MODEL` as well as the API key and LLM model. The embedding
+dimension in `project.yaml` must match the selected embedding model.

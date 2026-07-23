@@ -14,7 +14,7 @@ On `run`, the pipeline checks `prior_extraction_exists(graphify-out/)` (a `graph
 `cache/` dir). If present and `graphify.update` is enabled, it calls **`graphify update`**
 (`GraphifyExtractor.incremental_update`) which re-extracts only changed code files using
 Graphify's per-file cache — **no LLM tokens**. On the first run, or with `--full`, it does a
-full `graphify extract`. `demo` and `full-stack` use the incremental default.
+full `graphify extract`. `launch` and `run` use the incremental default.
 
 !!! note "Code vs documents"
     `graphify update` refreshes **code/AST** cheaply. A semantic re-extraction of changed
@@ -32,21 +32,23 @@ keeps its id across runs unless its **name or type** changes. That makes a by-id
    entities **added / removed / modified** (a description/community/source-path change while the
    id is stable), relationships **added / removed**, and community **size / cohesion** deltas
    (using Graphify's dated `.graphify_analysis.json` snapshots).
-3. `portal/changes.py` shapes a bounded payload (≤50 per list) with wiki links, rendered on the
-   **Changes** tab.
+3. `portal/changes.py` separates architecture, business-record, and relationship changes, then
+   computes a bounded set of directly affected upstream/downstream areas for the **Changes** tab.
 
 On the very first run there is no baseline, so the Changes tab shows a friendly empty state.
 A **rename** shows up as a removal + an addition (because the id is name+type based) — this is
 called out on the page.
 
-## Typical monthly cadence
+## Test Changes with a real source edit
 
 ```bash
 cd /path/to/project/.ontology-agent
-ontology-agent run --dry-run     # cheap incremental refresh
-ontology-agent portal build --dry-run
-ontology-agent portal serve --port 8765   # open /portal/changes.html to see the diff
+ontology-agent launch
 ```
 
-The diff baseline is the dry-run/JSON path. Neo4j keeps its own `stale`/`seen_at` marking
-(`graph/repository.py`) and is independent of this.
+Then change one source file or structured-data artifact and run `ontology-agent launch` again.
+Open `/portal/changes.html`: the page separates architecture changes, business-record movement,
+relationship changes, and directly affected upstream/downstream areas. If the source scope,
+mappings, row limits, or extraction settings changed, it refuses the comparison instead of
+showing a misleading mass diff. A run with no knowledge changes shows an explicit zero-change
+state.

@@ -9,20 +9,18 @@ The package name and `ontology-agent` CLI remain compatible with existing projec
 
 ## The business outcome
 
-Ontology Atlas turns fragmented technical and business knowledge into five client-facing
+Ontology Atlas turns fragmented technical and business knowledge into four client-facing
 workspaces:
 
 - **Ask** — cited Neo4j GraphRAG answers with an impact path and evidence drawer.
 - **Explore** — one graph with All, Architecture, and Business data layers.
-- **Insights** — hotspots, surprising links, and community cohesion.
-- **Changes** — additions, removals, and modified graph elements between runs.
-- **Trust** — source coverage, evidence tiers, rejected assertions, index freshness, and
-  golden-question evaluation.
+- **Insights** — measured impact hotspots, cross-area dependencies, lineage, and gaps.
+- **Changes** — compatible-baseline change and impact analysis grouped for decisions.
 
 There is one canonical graph. Neo4j stores it; Explore presents it; Ask retrieves from it.
-Graphify's `graph.html` is disabled because it duplicated the product surface and became
-resource-heavy on large graphs. `GRAPH_TREE.html` and `GRAPH_REPORT.md` remain available as
-secondary diagnostics.
+The generated `graphify-out/graph.html` is a concise code-and-document community map;
+`graph.raw.html` preserves Graphify's dense original. Neither contains structured business data
+or replaces the fused canonical graph.
 
 ## Architecture
 
@@ -31,17 +29,20 @@ flowchart LR
     Sources["Code, documents, business data"] --> Extract["Graphify + structured connectors"]
     Extract --> Validate["Validation, resolution, provenance"]
     Validate --> Neo4j["Neo4j canonical graph"]
-    Neo4j --> Index["KnowledgeChunk vector index"]
+    Neo4j --> Route["Exact lookup + deterministic analytics"]
+    Neo4j --> Index["Compact summary vector index"]
     Index --> Retrieve["Semantic entry + bounded graph traversal"]
+    Route --> Ask
     Retrieve --> Ask["Cited answer + impact path"]
-    Validate --> Explore["Explore, Insights, Changes, Trust"]
+    Validate --> Explore["Explore, Insights, Changes"]
     Validate --> Wiki["Reviewable wiki and evidence"]
 ```
 
-Knowledge chunks are deterministic and linked to canonical entities and source spans with
-`ABOUT` and `SUPPORTED_BY`. The official Neo4j GraphRAG `VectorCypherRetriever` performs
-semantic entry-point retrieval followed by fixed, read-only traversal. User questions never
-become Cypher.
+Knowledge chunks are deterministic summaries linked to canonical entities and source spans.
+Exact facts and supported aggregations use fixed parameterized queries first. Semantic questions
+use Neo4j GraphRAG retrieval. On loopback only, an official Text2Cypher planner may propose a
+query when deterministic analytics cannot express the request; Atlas validates, explains, bounds,
+project-scopes, and executes it through a read transaction itself.
 
 ## Prerequisites and installation
 
@@ -70,7 +71,6 @@ ontology-agent init client-atlas \
   --target /path/to/client/.ontology-agent \
   --source /path/to/client \
   --source-profile code-docs \
-  --with-markdown-wiki
 
 cd /path/to/client/.ontology-agent
 cp .env.example .env
@@ -86,19 +86,26 @@ embedding:
   dimension: 1536
 rag:
   enabled: true
-  top_k: 8
+  top_k: 4
   max_hops: 2
+  analytics:
+    enabled: true
+    text2cypher_local: true
+    max_hops: 3
+    max_rows: 100
+    timeout_seconds: 5
 ```
 
-Run the answer-first workflow:
+Run the complete answer-first workflow:
 
 ```bash
-ontology-agent run --neo4j
-ontology-agent rag index
-ontology-agent portal build --neo4j
-ontology-agent rag status
-ontology-agent portal serve
+ontology-agent launch
 ```
+
+This validates configuration, incrementally extracts knowledge, loads business data, validates
+and resolves the graph, publishes it to Neo4j, incrementally indexes retrieval summaries, builds
+the workspace, and serves it. Use `ontology-agent launch --no-serve` in CI. Generated projects
+also provide `make start` as a Neo4j-aware wrapper.
 
 Open `http://127.0.0.1:8765/portal/index.html`. `explore.html` also works offline; live
 answers require `portal serve`.
@@ -112,15 +119,15 @@ answers require `portal serve`.
    graph products.
 4. **Minute 6–8 — Assess impact:** select a node and run “What depends on this?”
 5. **Minute 8–9 — Show change:** open Changes to explain what moved since the last run.
-6. **Minute 9–10 — Establish trust:** open Trust and show coverage, index freshness, and the
-   golden-question score.
+6. **Minute 9–10 — Prove quality:** show the golden-question evaluation with citation,
+   retrieval, refusal, and latency results.
 
-The complete scripted build can be run with `ontology-agent demo`. When GraphRAG is enabled,
-it publishes, indexes, builds the portal, and runs the three flagship questions.
+Use `ontology-agent launch --no-serve` to perform the same build without starting the server.
 
 ## Evaluation
 
-Edit `rag/questions.yaml` with accepted entities, source paths, and explicit no-answer cases:
+Edit `rag/questions.yaml` with expected entities, source paths, relationship paths, and explicit
+no-answer cases. It contains expectations only—never scripted answers:
 
 ```bash
 ontology-agent rag evaluate
@@ -128,7 +135,7 @@ ontology-agent portal build --neo4j
 ```
 
 The report measures citation validity, expected-entity retrieval, expected-source retrieval,
-unsupported-answer refusal, latency, and per-question failures. Trust displays the saved result.
+unsupported-answer refusal, latency, and per-question failures, then saves the detailed result.
 
 ## Cost-bearing steps
 
@@ -136,13 +143,13 @@ unsupported-answer refusal, latency, and per-question failures. Trust displays t
 - `rag index` embeds only new or content-changed knowledge chunks.
 - Each supported `rag ask` call performs retrieval plus one answer-generation call.
 - Incremental Graphify updates avoid a full re-extraction when possible.
-- Portal building, offline Explore, Changes, Trust rendering, and graph traversal in the browser
+- Portal building, offline Explore, Changes rendering, and graph traversal in the browser
   do not call an LLM.
 
 ## Explicit v1 limitations
 
 - Local, single-project, read-only demo bound to `127.0.0.1` by default.
-- No authentication, tenancy, hosted deployment, MCP, or unrestricted Text2Cypher.
+- No authentication, tenancy, hosted deployment, MCP, or public/unrestricted Text2Cypher.
 - OpenAI is the supported GraphRAG embedding and generation provider in v1.
 - Golden questions are project-specific and must be curated before presenting scores.
 - Neo4j is required for live answers; the static Explore surface remains available without it.

@@ -5,8 +5,8 @@
 Recommended install after cloning the repo:
 
 ```bash
-cd /Users/yureeh/Documents/ontology_atlas
-uv tool install --force .
+cd /path/to/ontology_atlas
+uv tool install --force '.[rag]'
 ontology-agent --help
 ```
 
@@ -25,20 +25,20 @@ uv tool update-shell
 For a wheel or GitLab artifact:
 
 ```bash
-uv tool install --force company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ```
 
 For a global CLI using the pip ecosystem:
 
 ```bash
-pipx install .
+pipx install '.[rag]'
 ```
 
 For package development only:
 
 ```bash
-uv sync --extra dev
-uv run --extra dev ontology-agent --help
+uv sync --extra dev --extra rag
+uv run --extra dev --extra rag ontology-agent --help
 ```
 
 Full macOS, Linux, and Windows install notes are in [Install](install.md).
@@ -48,11 +48,11 @@ Full macOS, Linux, and Windows install notes are in [Install](install.md).
 For a real repository, create the ontology project inside that repository and import a curated source copy:
 
 ```bash
-ontology-agent init ontology-atlas-oracle-bets \
-  --target /Users/yureeh/dev/oracle_bets/.ontology-agent \
-  --source /Users/yureeh/dev/oracle_bets \
+ontology-agent init client-atlas \
+  --target /path/to/client/.ontology-agent \
+  --source /path/to/client \
   --source-profile code-docs \
-  --with-markdown-wiki
+  --with-docker \
 ```
 
 This creates:
@@ -69,9 +69,6 @@ This creates:
 ├── graph/
 ├── graphify-out/
 ├── wiki/
-├── logs/
-├── tests/
-└── scripts/
 ```
 
 ## 3. Add Source Files
@@ -113,84 +110,68 @@ Built portal files: portal/index.html, portal/graph.json
 
 The rejection count is not automatically a failure. It means validation filtered candidate assertions.
 
-## 5. Write To Neo4j
+## 5. Publish, Index, And Serve
 
-After Neo4j Desktop is running and `.env` contains credentials:
+After Neo4j is running, set the Neo4j/OpenAI values in `.env`, then enable the answer layer:
 
-```bash
-make publish
+```yaml
+llm:
+  provider: openai
+embedding:
+  provider: openai
+rag:
+  enabled: true
 ```
 
+Run the complete client-demo path with one command:
+
+```bash
+ontology-agent launch
+```
+
+It performs one incremental extraction and then publishes, indexes, builds, and serves that exact
+graph. Press Ctrl+C to stop the portal. Generated Docker projects can use `make start` to ensure
+Neo4j is running first. Use `ontology-agent launch --no-serve` for CI or refresh-only runs.
+
 This is additive and idempotent. It uses stable IDs and Neo4j `MERGE`, so normal code
-additions update the graph without deleting previous data. Use `make reset-neo4j` only
+additions update the graph without deleting previous data. Use `make reset` only
 for a clean local demo rebuild after major deletions or renames.
 
 For the normal additive path with safe stale marking after deletes or renames:
 
-```bash
-make publish-prune
-```
+`make refresh` uses safe stale marking automatically.
 
-## 6. Build The Portal
+For offline validation without Neo4j or OpenAI:
 
 ```bash
-make portal
-make view
+make check
 ```
 
 The portal is written to `portal/index.html` and links to the wiki, Graphify artifacts,
 and the curated architecture graph. This path uses the dry-run graph and does not
 require Neo4j.
 
-## 7. Full Demo
+## 6. Direct CLI Equivalent
 
 ```bash
-make demo-dry-run
-make demo
-```
-
-Use `make demo-dry-run` for a full local visual demo without Neo4j. Use `make demo`
-when Neo4j is configured and you want the canonical graph published too.
-
-## 8. Export The Wiki
-
-```bash
-make wiki
-```
-
-The project-local `wiki/` folder is intended to be committed.
-
-## 9. Direct CLI Equivalent
-
-```bash
-ontology-agent run --dry-run
-ontology-agent run --neo4j
-ontology-agent demo --dry-run
-ontology-agent demo
+ontology-agent launch
+ontology-agent launch --no-serve
 ontology-agent portal build --dry-run
 ontology-agent portal serve
 ontology-agent graph verify-visuals --neo4j
 ```
 
-Compatibility targets remain available:
-
-```bash
-make dry-run
-make sync-neo4j
-make full-stack
-```
-
 See `docs/reference/cli.md` for every CLI command and `docs/reference/generated-project.md`
 for every generated Make target.
 
-## 10. Serve The Portal
+## 7. Serve The Portal
 
 ```bash
 ontology-agent portal serve --port 8765
 ```
 
 Then open `http://127.0.0.1:8765/portal/index.html` to use Ask, Explore, Insights,
-Changes, and Trust. For live answers, publish to Neo4j and run `ontology-agent rag index` first.
+and Changes. For live answers, publish to Neo4j and run `ontology-agent rag index` first.
 
 ## Clean Wheel Smoke Test
 
@@ -198,7 +179,7 @@ This is for release validation, not normal usage:
 
 ```bash
 uv build
-uv tool install --force dist/company_ontology_agent-0.1.0-py3-none-any.whl
+uv tool install --force 'dist/company_ontology_agent-0.1.0-py3-none-any.whl[rag]'
 ontology-agent --help
 ```
 

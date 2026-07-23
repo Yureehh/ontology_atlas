@@ -15,7 +15,10 @@
     <nav class="tabs">__NAV__</nav>
   </header>
 
-  <div class="metrics" id="metrics"></div>
+  <div class="metrics-shell">
+    <div class="metrics" id="metrics"></div>
+    <button id="show-details" class="ghost show-details" hidden>Show details</button>
+  </div>
 
   <main class="graph-app" id="graph-app" hidden>
     <aside class="rail" id="left-rail">
@@ -57,6 +60,7 @@
     </aside>
 
     <section class="stage">
+      <div id="architecture-breadcrumbs" class="architecture-breadcrumbs" hidden></div>
       <div id="graph"></div>
       <p class="hint" id="hint"></p>
     </section>

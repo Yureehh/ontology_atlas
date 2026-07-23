@@ -18,35 +18,9 @@ SECTION_RULES: list[tuple[str, set[str], set[str]]] = [
         {"APIEndpoint", "Function", "Module", "System"},
     ),
     (
-        "Data Relationships",
-        {
-            "reads_from",
-            "writes_to",
-            "stores",
-            "generates",
-            "team_in_league",
-            "match_in_league",
-            "team_played_match",
-            "player_played_match",
-            "player_played_for",
-        },
+        "Structured Data Relationships",
+        {"reads_from", "writes_to", "stores", "generates"},
         {"DataModel", "Database", "DataStore", "BusinessEntity"},
-    ),
-    (
-        "Model/Prediction Relationships",
-        {
-            "predicts",
-            "evaluates",
-            "model_artifact_describes",
-            "model_artifact_generated",
-            "prediction_for_match",
-        },
-        {"BusinessEntity", "DataModel", "Technology", "Class", "Function"},
-    ),
-    (
-        "Market/Bet Relationships",
-        {"prediction_uses_market", "bet_on_match", "bet_uses_market"},
-        {"BusinessEntity"},
     ),
     (
         "Supporting Code Relationships",
@@ -63,10 +37,6 @@ PREDICATE_WEIGHTS = {
     "generates": 10,
     "predicts": 10,
     "evaluates": 10,
-    "model_artifact_generated": 12,
-    "model_artifact_describes": 11,
-    "prediction_uses_market": 10,
-    "prediction_for_match": 9,
     "uses": 8,
     "calls": 7,
     "defines": 5,
@@ -140,7 +110,7 @@ def _belongs_to_section(
         object_.type.value,
     }
     if "BusinessEntity" in mapped_or_entity_types:
-        return False
+        return EntityType.business_entity in {subject.type, object_.type}
     return bool(mapped_types & mapped_or_entity_types)
 
 

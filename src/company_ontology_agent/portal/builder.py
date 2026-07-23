@@ -1,8 +1,8 @@
 """Generate the answer-first Ontology Atlas portal.
 
 The portal presents one explorable graph with architecture and business-data layers.
-GraphRAG answers, intelligence, changes, and trust signals are separate views over the
-same canonical graph rather than competing graph products.
+GraphRAG answers, intelligence, and changes are separate views over the same canonical
+graph rather than competing graph products.
 """
 
 from __future__ import annotations
@@ -12,10 +12,13 @@ import re
 from importlib.resources import files
 from pathlib import Path
 
+from company_ontology_agent.extraction.code_map import write_code_map
 from company_ontology_agent.extraction.graphify_adapter import (
+    apply_community_names,
     load_graphify_analysis,
     load_previous_analysis,
 )
+from company_ontology_agent.extraction.graphify_artifacts import parse_graphify_graph
 from company_ontology_agent.graph.diffing import diff_graphs
 from company_ontology_agent.graph.models import (
     Assertion,
@@ -29,23 +32,28 @@ from company_ontology_agent.graph.repository import JsonGraphRepository
 from company_ontology_agent.portal import changes as changes_mod
 from company_ontology_agent.portal import intelligence as intel
 from company_ontology_agent.portal import ranking
-from company_ontology_agent.retrieval.questions import FLAGSHIP_QUESTIONS
-from company_ontology_agent.utils.display import public_project_name
+from company_ontology_agent.retrieval.evaluation import load_questions
+from company_ontology_agent.utils.display import (
+    is_opaque_entity_name,
+    public_entity_type,
+    public_project_name,
+)
 from company_ontology_agent.utils.ids import slugify
 from company_ontology_agent.wiki.relationships import key_relationship_ids
+from company_ontology_agent.wiki.templates import entity_wiki_ref
 
 JsonDict = dict[str, object]
 
 _ASSETS = files("company_ontology_agent.portal") / "assets"
-_STALE_FILES = ["repo-ontology.html"]
+_STALE_FILES = ["repo-ontology.html", "repo.html", "data-graph.html", "trust.html"]
 
 # (filename, page id). Compatibility graph pages are redirects generated separately.
 _PAGES = [
     ("ask.html", "ask", None),
-    ("explore.html", "explore", "all"),
+    ("explore.html", "explore", "repo"),
+    ("sources.html", "sources", None),
     ("intelligence.html", "intelligence", None),
     ("changes.html", "changes", None),
-    ("trust.html", "trust", None),
 ]
 
 
@@ -73,35 +81,39 @@ class PortalBuilder:
         (output_path / "graph.json").write_text(json.dumps(full_graph, indent=2), encoding="utf-8")
 
         graphify_out = project_root / "graphify-out"
+        graphify_json = graphify_out / "graph.json"
+        if graphify_json.exists():
+            graphify_graph = apply_community_names(
+                parse_graphify_graph(graphify_json, graph.project_slug), graphify_out
+            )
+            write_code_map(graphify_graph, graphify_out)
         analysis = load_graphify_analysis(graphify_out)
         report_exists = (graphify_out / "GRAPH_REPORT.md").exists()
-        intelligence = intel.build_intelligence(
-            graph, analysis, page_ids=page_ids, report_exists=report_exists
-        )
+        intelligence = intel.build_intelligence(graph, report_exists=report_exists)
         artifacts = self._graphify_artifacts(graphify_out)
-        trust_data: JsonDict = {
-            "evaluation": _load_json(project_root / "rag" / "evaluation.json"),
-            "index_status": _load_json(project_root / "rag" / "index-status.json"),
-            "rejected_assertions": _line_count(
-                project_root / "data" / "processed" / "rejected" / "rejections.jsonl"
-            ),
-        }
+        suggested_questions = _suggested_questions(project_root, graph)
 
         # Run-to-run diff for the Changes tab (dry-run/JSON baseline only).
         previous = JsonGraphRepository(
             project_root / "data" / "processed" / "graph.json"
         ).read_previous(graph.project_slug)
         diff = diff_graphs(previous, graph, load_previous_analysis(graphify_out), analysis)
-        name_by_id = {entity.id: entity.name for entity in graph.entities}
-        if previous is not None:
-            name_by_id.update({entity.id: entity.name for entity in previous.entities})
-        changes = changes_mod.shape_changes(diff, page_ids, name_by_id)
+        compatible, reason = changes_mod.baseline_compatibility(
+            project_root, has_baseline=previous is not None
+        )
+        changes = changes_mod.shape_changes(
+            diff,
+            graph.entities,
+            previous.entities if previous else [],
+            graph.assertions,
+            previous.assertions if previous else [],
+            compatible=compatible,
+            incompatibility_reason=reason,
+        )
 
         shell = _asset("shell.html")
         css = _asset("portal.css")
         script = _asset("portal.js")
-        pinned = ranking.key_relationship_endpoint_ids(graph)
-
         written: list[Path] = []
         for filename, page, layer in _PAGES:
             bootstrap = self._bootstrap(
@@ -113,8 +125,7 @@ class PortalBuilder:
                 title=title,
                 intelligence=intelligence,
                 changes=changes,
-                pinned=pinned,
-                trust_data=trust_data,
+                suggested_questions=suggested_questions,
             )
             bootstrap["artifacts"] = artifacts
             html = (
@@ -137,14 +148,6 @@ class PortalBuilder:
         )
         written.append(output_path / "index.html")
 
-        for filename, layer in (("repo.html", "repo"), ("data-graph.html", "data")):
-            path = output_path / filename
-            path.write_text(
-                _redirect_page(f"{title} · Ontology Portal", f"explore.html#layer={layer}"),
-                encoding="utf-8",
-            )
-            written.append(path)
-
         written.append(output_path / "graph.json")
         return written
 
@@ -157,18 +160,30 @@ class PortalBuilder:
         for entity in graph.entities:
             kind = entity_graph_kind(entity)
             node_kind[entity.id] = kind
-            mapped_type = str(entity.metadata.get("mapped_type") or entity.type.value)
+            mapped_type = public_entity_type(entity)
             nodes.append(
                 {
                     "id": entity.id,
                     "name": entity.name,
-                    "type": entity.type.value,
+                    "type": public_entity_type(entity),
                     "mapped_type": mapped_type,
                     "visual_type": _visual_type(entity, kind, mapped_type),
                     "community": entity.community,
+                    "architecture_group": (
+                        ranking.architecture_group(
+                            {
+                                "source_path": entity.source_path,
+                                "community": entity.community,
+                                "visual_type": _visual_type(entity, kind, mapped_type),
+                            }
+                        )
+                        if kind == "repo"
+                        else ""
+                    ),
                     "domain": str(entity.metadata.get("domain") or ""),
                     "dataset": str(entity.metadata.get("dataset") or ""),
                     "connector": str(entity.metadata.get("connector") or ""),
+                    "semantic_summary": bool(entity.metadata.get("semantic_summary")),
                     "source_path": entity.source_path,
                     "description": entity.description,
                     "graph_kind": kind,
@@ -215,8 +230,7 @@ class PortalBuilder:
         title: str,
         intelligence: JsonDict | None,
         changes: JsonDict,
-        pinned: frozenset[str],
-        trust_data: JsonDict,
+        suggested_questions: list[str],
     ) -> JsonDict:
         stats: JsonDict = {
             "entities": len(graph.entities),
@@ -224,9 +238,6 @@ class PortalBuilder:
             "sources": len(graph.sources),
         }
         if page == "intelligence":
-            summary = intelligence.get("summary") if intelligence else None
-            if isinstance(summary, dict):
-                stats["communities"] = summary.get("community_count", 0)
             return {"page": page, "title": title, "stats": stats, "intelligence": intelligence}
         if page == "changes":
             return {"page": page, "title": title, "stats": stats, "changes": changes}
@@ -235,58 +246,18 @@ class PortalBuilder:
                 "page": page,
                 "title": title,
                 "stats": stats,
-                "suggested_questions": list(FLAGSHIP_QUESTIONS),
+                "suggested_questions": suggested_questions,
                 "rag_status_url": "/api/rag/status",
                 "rag_query_url": "/api/rag/query",
             }
-        if page == "trust":
-            levels = {"authoritative": 0, "evidence_backed": 0, "weak": 0}
-            for assertion in graph.assertions:
-                levels[_evidence_level(assertion)] += 1
-            covered = sum(
-                bool(assertion.source_path or assertion.evidence_text)
-                for assertion in graph.assertions
-            )
-            rejected = trust_data.get("rejected_assertions", 0)
+        if page == "sources":
             return {
                 "page": page,
                 "title": title,
                 "stats": stats,
-                "trust": {
-                    "evidence_levels": levels,
-                    "warnings": graph.warnings,
-                    "source_coverage": {
-                        "covered": covered,
-                        "total": len(graph.assertions),
-                        "percent": round(100 * covered / len(graph.assertions), 1)
-                        if graph.assertions
-                        else 0,
-                    },
-                    "rejected_assertions": rejected,
-                    "quality": intel.build_quality(graph),
-                    "index_status": trust_data.get("index_status"),
-                    "rag_evaluation": trust_data.get("evaluation"),
-                },
+                "sources_url": "/api/sources",
             }
-
-        shown_nodes: list[JsonDict] = []
-        shown_links: list[JsonDict] = []
-        for graph_kind, limit, cap in (
-            ("repo", ranking.REPO_LIMIT, None),
-            ("data", ranking.DATA_LIMIT, ranking.DATA_PER_TYPE_CAP),
-        ):
-            kind_nodes = [n for n in nodes if n["graph_kind"] == graph_kind]
-            kind_links = [link for link in links if link["graph_kind"] == graph_kind]
-            selected_nodes, selected_links = ranking.prune_layer(
-                kind_nodes,
-                kind_links,
-                limit=limit,
-                per_type_cap=cap,
-                pinned_ids=pinned,
-                link_limit=ranking.LINK_LIMIT,
-            )
-            shown_nodes.extend(selected_nodes)
-            shown_links.extend(selected_links)
+        shown_nodes, shown_links = ranking.aggregate_explore(nodes, links)
         stats.update(
             {
                 "shown_nodes": len(shown_nodes),
@@ -303,7 +274,8 @@ class PortalBuilder:
             "title": title,
             "nodes": shown_nodes,
             "links": shown_links,
-            "search_index": _search_index(nodes),
+            "search_index": _offline_search_index(shown_nodes),
+            "entity_search_url": "/api/entities/search",
             "stats": stats,
             "full_graph_url": "graph.json",
         }
@@ -311,6 +283,8 @@ class PortalBuilder:
     # --------------------------------------------------------------- helpers
     def _graphify_artifacts(self, graphify_out: Path) -> list[JsonDict]:
         candidates = [
+            ("graph.html", "Code & docs map"),
+            ("graph.raw.html", "Dense Graphify map"),
             ("GRAPH_TREE.html", "Repository tree"),
             ("GRAPH_REPORT.md", "Full report"),
         ]
@@ -322,7 +296,7 @@ class PortalBuilder:
 
     def _wiki_link(self, entity: Entity, page_ids: set[str]) -> str | None:
         if entity.id in page_ids:
-            return f"../wiki/entities/{slugify(entity.name)}.html"
+            return f"../wiki/{entity_wiki_ref(entity)}.html"
         dataset = entity.metadata.get("dataset")
         if dataset:
             return f"../wiki/datasets/{slugify(str(dataset))}.html"
@@ -332,9 +306,9 @@ class PortalBuilder:
         tabs = [
             ("ask", "ask.html", "Ask"),
             ("explore", "explore.html", "Explore"),
+            ("sources", "sources.html", "Sources"),
             ("intelligence", "intelligence.html", "Insights"),
             ("changes", "changes.html", "Changes"),
-            ("trust", "trust.html", "Trust"),
         ]
         parts = []
         for page, href, label in tabs:
@@ -343,12 +317,8 @@ class PortalBuilder:
         return "".join(parts)
 
 
-def _search_index(layer_nodes: list[JsonDict]) -> list[JsonDict]:
-    """Compact index of *every* entity in a layer so search covers nodes the plot omits.
-
-    Kept deliberately small (id/name/type/wiki) so full-corpus search works offline without
-    bloating the page; ``wiki`` is retained so a non-plotted hit can still open its page.
-    """
+def _offline_search_index(layer_nodes: list[JsonDict]) -> list[JsonDict]:
+    """Index the plotted subset; live portals search the canonical graph through the API."""
     return [
         {
             "i": node["id"],
@@ -360,14 +330,59 @@ def _search_index(layer_nodes: list[JsonDict]) -> list[JsonDict]:
     ]
 
 
+def _suggested_questions(project_root: Path, graph: ExtractedGraph) -> list[str]:
+    try:
+        questions = load_questions(project_root / "rag" / "questions.yaml")
+    except (OSError, RuntimeError, ValueError):
+        return _derived_questions(graph)
+    suggestions = [question.question for question in questions if question.should_answer][:3]
+    return suggestions or _derived_questions(graph)
+
+
+def _derived_questions(graph: ExtractedGraph) -> list[str]:
+    entities = {entity.id: entity for entity in graph.entities}
+    degree: dict[str, int] = {entity.id: 0 for entity in graph.entities}
+    for assertion in graph.assertions:
+        degree[assertion.subject_id] = degree.get(assertion.subject_id, 0) + 1
+        degree[assertion.object_id] = degree.get(assertion.object_id, 0) + 1
+    named = [
+        entity
+        for entity in sorted(
+            graph.entities, key=lambda entity: (-degree.get(entity.id, 0), entity.name)
+        )
+        if not is_opaque_entity_name(entity.name) and not entity.metadata.get("semantic_summary")
+    ]
+    questions: list[str] = []
+    if named:
+        questions.append(f"What depends on {named[0].name}?")
+    summaries = [entity for entity in graph.entities if entity.metadata.get("semantic_summary")]
+    if summaries:
+        mapped_type = str(summaries[0].metadata.get("mapped_type") or summaries[0].type.value)
+        questions.append(f"Which sources define {mapped_type}?")
+    for assertion in graph.assertions:
+        subject = entities.get(assertion.subject_id)
+        object_ = entities.get(assertion.object_id)
+        if subject and object_ and not any(
+            is_opaque_entity_name(entity.name) for entity in (subject, object_)
+        ):
+            questions.append(
+                f"What evidence connects {subject.name} to {object_.name}?"
+            )
+            break
+    defaults = [
+        "Which components have the most downstream dependencies?",
+        "Which datasets are authoritative?",
+        "Where is ownership or evidence missing?",
+    ]
+    return list(dict.fromkeys([*questions, *defaults]))[:3]
+
+
 _SUBTITLES = {
     "ask": "Ask grounded questions across code, documents, and business data.",
     "explore": "One evidence-first graph with architecture and business-data layers.",
-    "intelligence": (
-        "Graphify graph intelligence — hotspots, surprising links and community cohesion."
-    ),
-    "changes": "What changed since the previous run — added, removed and modified graph elements.",
-    "trust": "Evidence coverage, data quality, freshness, and GraphRAG evaluation.",
+    "sources": "Browse every ingested source and read its full text from Neo4j.",
+    "intelligence": "Measured dependencies, impact hotspots, lineage, and knowledge gaps.",
+    "changes": "Trustworthy change and impact analysis against a compatible baseline.",
 }
 
 
@@ -390,23 +405,6 @@ def _json_for_script(payload: JsonDict) -> str:
     return json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
 
 
-def _load_json(path: Path) -> JsonDict | None:
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _line_count(path: Path) -> int:
-    try:
-        return sum(bool(line.strip()) for line in path.read_text(encoding="utf-8").splitlines())
-    except OSError:
-        return 0
-
-
 def _esc(value: str) -> str:
     return (
         value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
@@ -424,7 +422,9 @@ def _evidence_level(assertion: Assertion) -> str:
 def _visual_type(entity: Entity, graph_kind: str, mapped_type: str) -> str:
     if graph_kind == "data":
         return mapped_type
-    return entity.type.value if entity.type != EntityType.concept else _concept_visual_type(entity)
+    if entity.type == EntityType.concept:
+        return _concept_visual_type(entity)
+    return public_entity_type(entity)
 
 
 def _concept_visual_type(entity: Entity) -> str:

@@ -1,1 +1,1 @@
-"""Static manager demo portal generation."""
+"""Answer-first Ontology Atlas workspace generation."""

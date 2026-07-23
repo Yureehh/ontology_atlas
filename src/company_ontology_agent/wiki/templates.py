@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from company_ontology_agent.graph.models import Assertion, Entity, EntityType
+from company_ontology_agent.utils.display import public_entity_type
 from company_ontology_agent.utils.ids import slugify
 from company_ontology_agent.wiki.frontmatter import render_frontmatter
 
@@ -8,6 +9,8 @@ from company_ontology_agent.wiki.frontmatter import render_frontmatter
 # Single source of truth — imported by the exporter so page paths and link
 # targets can never drift apart.
 TYPE_DIRS = {
+    EntityType.module: "modules",
+    EntityType.api_endpoint: "apis",
     EntityType.decision: "decisions",
     EntityType.requirement: "requirements",
     EntityType.issue: "issues",
@@ -34,6 +37,7 @@ def entity_page(
     outgoing: list[tuple[Assertion, Entity]],
     evidence_snippets: dict[str, str],
 ) -> str:
+    display_type = public_entity_type(entity)
     frontmatter = render_frontmatter(
         {
             "id": entity.id,
@@ -49,9 +53,9 @@ def entity_page(
     evidence_lines = _evidence_lines(evidence, evidence_snippets)
     return (
         frontmatter
-        + f"# {entity.type.value}: {entity.name}\n\n"
+        + f"# {display_type}: {entity.name}\n\n"
         + "## Summary\n\n"
-        + f"{entity.name} is tracked as a {entity.type.value} in the project graph. "
+        + f"{entity.name} is tracked as a {display_type} in the project graph. "
         + f"It has {len(outgoing)} outgoing and {len(incoming)} incoming "
         + "validated relationships.\n\n"
         + "## Aliases\n\n"

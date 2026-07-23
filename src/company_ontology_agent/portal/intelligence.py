@@ -1,219 +1,308 @@
-"""Shape Graphify's graph-intelligence analysis into a JSON payload for the portal.
-
-Graphify already computes architectural hotspots ("god" nodes), surprising
-connections, and per-community cohesion in ``.graphify_analysis.json`` but nothing
-surfaced it. This turns that raw analysis into a dashboard-ready structure with wiki
-deep links resolved where possible.
-"""
+"""Build defensible, evidence-linked findings for the Insights page."""
 
 from __future__ import annotations
 
 from collections import Counter, defaultdict
 from typing import Any
 
-from company_ontology_agent.graph.models import Entity, ExtractedGraph
-from company_ontology_agent.utils.ids import slugify
+from company_ontology_agent.graph.models import (
+    Entity,
+    EntityType,
+    ExtractedGraph,
+    entity_graph_kind,
+)
+from company_ontology_agent.utils.display import public_entity_type
+from company_ontology_agent.utils.source_paths import artifact_path
 
-# A community needs at least this many members before low cohesion is worth flagging.
-_MIN_REFACTOR_SIZE = 5
-
-
-def _wiki_url(entity: Entity | None, page_ids: set[str]) -> str | None:
-    if entity is not None and entity.id in page_ids:
-        return f"../wiki/entities/{slugify(entity.name)}.html"
-    return None
-
-
-def _norm(label: object) -> str:
-    return str(label).strip().removesuffix("()").strip().lower()
+_GENERIC_NAMES = {
+    "any",
+    "dataframe",
+    "dict",
+    "index",
+    "list",
+    "none",
+    "object",
+    "optional",
+    "path",
+    "protocol",
+    "series",
+    "str",
+    "string",
+    "valueerror",
+}
+_ARCHITECTURE_FLOW_PREDICATES = {
+    "calls",
+    "depends_on",
+    "imports",
+    "imports_from",
+    "inherits",
+    "shares_data_with",
+    "uses",
+}
+_HOTSPOT_TYPES = {
+    EntityType.system,
+    EntityType.package,
+    EntityType.module,
+    EntityType.class_,
+    EntityType.data_model,
+    EntityType.api_endpoint,
+    EntityType.workflow,
+    EntityType.data_store,
+    EntityType.external_service,
+}
 
 
 def build_intelligence(
     graph: ExtractedGraph,
-    analysis: dict[str, Any] | None,
     *,
-    page_ids: set[str],
     report_exists: bool,
-) -> dict[str, Any] | None:
-    """Return a JSON-serializable intelligence payload, or ``None`` if no analysis exists."""
-    if not analysis:
-        return None
+) -> dict[str, Any]:
+    by_id = {entity.id: entity for entity in graph.entities}
+    incoming: Counter[str] = Counter()
+    outgoing: Counter[str] = Counter()
+    degree: Counter[str] = Counter()
+    for assertion in graph.assertions:
+        outgoing[assertion.subject_id] += 1
+        incoming[assertion.object_id] += 1
+        degree[assertion.subject_id] += 1
+        degree[assertion.object_id] += 1
 
-    by_graphify = {entity.graphify_id: entity for entity in graph.entities if entity.graphify_id}
-    by_name: dict[str, Entity] = {}
-    community_labels: dict[str, str] = {}
+    impact_hotspots = []
+    for entity in sorted(
+        (entity for entity in graph.entities if _is_actionable_architecture(entity)),
+        key=lambda entity: (-degree[entity.id], entity.name),
+    )[:12]:
+        if degree[entity.id] == 0:
+            continue
+        impact_hotspots.append(
+            {
+                "id": entity.id,
+                "name": entity.name,
+                "type": public_entity_type(entity),
+                "area": entity.community or _source_area(entity),
+                "fan_in": incoming[entity.id],
+                "fan_out": outgoing[entity.id],
+                "degree": degree[entity.id],
+                "source_path": entity.source_path,
+            }
+        )
+
+    cross_boundaries = []
+    lineage_groups: dict[tuple[str, str, str, str, str], dict[str, Any]] = {}
+    lineage_counts: Counter[tuple[str, str, str, str, str]] = Counter()
+    for assertion in graph.assertions:
+        source = by_id.get(assertion.subject_id)
+        target = by_id.get(assertion.object_id)
+        if source is None or target is None:
+            continue
+        source_kind = entity_graph_kind(source)
+        target_kind = entity_graph_kind(target)
+        source_area = source.community or _source_area(source)
+        target_area = target.community or _source_area(target)
+        row = {
+            "source": source.name,
+            "target": target.name,
+            "predicate": assertion.predicate,
+            "source_area": source_area,
+            "target_area": target_area,
+            "evidence": assertion.evidence_text,
+            "source_path": assertion.source_path,
+            "confidence": assertion.confidence,
+        }
+        if (
+            source_kind == target_kind == "repo"
+            and assertion.predicate in _ARCHITECTURE_FLOW_PREDICATES
+            and source_area
+            and target_area
+            and source_area != target_area
+            and _is_meaningful_entity(source)
+            and _is_meaningful_entity(target)
+        ):
+            cross_boundaries.append(row)
+        if (
+            (source_kind != target_kind or _lineage_type(source) or _lineage_type(target))
+            and _is_meaningful_entity(source)
+            and _is_meaningful_entity(target)
+        ):
+            lineage_row = _lineage_row(source, target, assertion.predicate, row)
+            key = (
+                lineage_row["predicate"],
+                lineage_row["source"],
+                lineage_row["target"],
+                lineage_row["source_type"],
+                lineage_row["target_type"],
+            )
+            lineage_groups.setdefault(key, lineage_row)
+            lineage_counts[key] += 1
+
+    data_lineage = []
+    for key, row in sorted(
+        lineage_groups.items(), key=lambda item: (-lineage_counts[item[0]], item[0])
+    ):
+        count = lineage_counts[key]
+        data_lineage.append(
+            {
+                **row,
+                "count": count,
+                "evidence": (
+                    f"{count:,} graph relationship{'s' if count != 1 else ''} "
+                    f"{'support' if count != 1 else 'supports'} this lineage."
+                ),
+            }
+        )
+    cross_boundaries = _aggregate_cross_boundaries(cross_boundaries)
+
+    orphan_groups: Counter[tuple[str, str]] = Counter()
     for entity in graph.entities:
-        by_name.setdefault(_norm(entity.normalized_name), entity)
-        by_name.setdefault(_norm(entity.name), entity)
-        community_id = entity.metadata.get("community_id")
-        if community_id is not None and entity.community:
-            community_labels.setdefault(str(community_id), entity.community)
+        if entity_graph_kind(entity) != "data" or degree[entity.id] != 0:
+            continue
+        orphan_groups[
+            (
+                str(entity.metadata.get("dataset") or "Structured data"),
+                public_entity_type(entity),
+            )
+        ] += 1
 
-    def resolve(token: object) -> Entity | None:
-        if token in by_graphify:
-            return by_graphify[str(token)]
-        return by_name.get(_norm(token))
+    dataset_entities: dict[str, list[Entity]] = defaultdict(list)
+    for entity in graph.entities:
+        dataset = str(entity.metadata.get("dataset") or "")
+        if dataset:
+            dataset_entities[dataset].append(entity)
+    ownership_gaps = [
+        {"dataset": dataset, "records": len(items)}
+        for dataset, items in sorted(dataset_entities.items())
+        if not any(item.metadata.get("owner") for item in items)
+    ]
+    missing_evidence = sum(
+        not (assertion.source_path or assertion.evidence_text or assertion.evidence_span_id)
+        for assertion in graph.assertions
+    )
 
-    hotspots: list[dict[str, Any]] = []
-    for god in analysis.get("gods", []):
-        match = resolve(god.get("id"))
-        hotspots.append(
-            {
-                "label": god.get("label") or god.get("id"),
-                "degree": int(god.get("degree", 0)),
-                "community": match.community if match else None,
-                "wiki_url": _wiki_url(match, page_ids),
-            }
-        )
-    hotspots.sort(key=lambda hotspot: int(hotspot["degree"]), reverse=True)
+    duplicate_names: dict[str, set[str]] = defaultdict(set)
+    for entity in graph.entities:
+        duplicate_names[entity.normalized_name].add(public_entity_type(entity))
+    conflicts = [
+        {"name": name, "types": sorted(types)}
+        for name, types in duplicate_names.items()
+        if name and len(types) > 1
+    ][:20]
 
-    surprises = []
-    for surprise in analysis.get("surprises", []):
-        source = resolve(surprise.get("source"))
-        target = resolve(surprise.get("target"))
-        surprises.append(
-            {
-                "source": surprise.get("source"),
-                "target": surprise.get("target"),
-                "relation": surprise.get("relation"),
-                "confidence": surprise.get("confidence"),
-                "why": surprise.get("why"),
-                "source_files": surprise.get("source_files", []),
-                "source_wiki": _wiki_url(source, page_ids),
-                "target_wiki": _wiki_url(target, page_ids),
-            }
-        )
-
-    communities_raw = analysis.get("communities", {}) or {}
-    cohesion = analysis.get("cohesion", {}) or {}
-    communities: list[dict[str, Any]] = []
-    for community_id, members in communities_raw.items():
-        member_entities = [by_graphify[m] for m in members if m in by_graphify]
-        member_label = next((e.community for e in member_entities if e.community), None)
-        communities.append(
-            {
-                "id": str(community_id),
-                "label": community_labels.get(str(community_id))
-                or member_label
-                or f"Community {community_id}",
-                "size": len(members),
-                "cohesion": round(float(cohesion.get(str(community_id), 0.0)), 3),
-                "members": [
-                    {"name": entity.name, "wiki_url": _wiki_url(entity, page_ids)}
-                    for entity in member_entities[:8]
-                ],
-            }
-        )
-    communities.sort(key=lambda community: int(community["size"]), reverse=True)
-
-    refactor_candidates = _refactor_candidates(communities)
-    questions = _suggested_questions(graph, hotspots, surprises, communities, page_ids)
-    quality = build_quality(graph)
-
-    tokens = analysis.get("tokens", {}) or {}
     return {
-        "hotspots": hotspots,
-        "surprises": surprises,
-        "communities": communities,
-        "refactor_candidates": refactor_candidates,
-        "questions": questions,
-        "quality": quality,
-        "tokens": {"input": tokens.get("input", 0), "output": tokens.get("output", 0)},
+        "impact_hotspots": impact_hotspots,
+        "cross_boundaries": cross_boundaries[:20],
+        "data_lineage": data_lineage[:20],
+        "orphan_groups": [
+            {"dataset": dataset, "type": mapped_type, "count": count}
+            for (dataset, mapped_type), count in orphan_groups.most_common(20)
+        ],
+        "ownership_gaps": ownership_gaps[:20],
+        "evidence_gaps": {"relationships_without_evidence": missing_evidence},
+        "conflicting_concepts": conflicts,
         "report_url": "../graphify-out/GRAPH_REPORT.md" if report_exists else None,
         "summary": {
-            "community_count": len(communities_raw),
-            "hotspot_count": len(hotspots),
-            "surprise_count": len(surprises),
-            "question_count": len(questions),
+            "hotspot_count": len(impact_hotspots),
+            "cross_boundary_count": len(cross_boundaries),
+            "lineage_count": len(data_lineage),
+            "orphan_count": sum(orphan_groups.values()),
         },
     }
+def _is_actionable_architecture(entity: Entity) -> bool:
+    return (
+        entity_graph_kind(entity) == "repo"
+        and entity.type in _HOTSPOT_TYPES
+        and _is_meaningful_entity(entity)
+    )
 
 
-def _refactor_candidates(communities: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Sizeable communities with the lowest cohesion — loosely-knit, worth splitting."""
-    sizeable = [c for c in communities if int(c["size"]) >= _MIN_REFACTOR_SIZE]
-    sizeable.sort(key=lambda c: float(c["cohesion"]))
-    return sizeable[:8]
+def _is_meaningful_entity(entity: Entity) -> bool:
+    if entity_graph_kind(entity) == "data":
+        return True
+    name = entity.name.strip()
+    return (
+        bool(name)
+        and name.lower() not in _GENERIC_NAMES
+        and not _is_test_entity(entity)
+        and not name.lower().startswith(("oe:", "entity_"))
+        and not (name.isupper() and "_" in name)
+        and len(name) <= 80
+        and len(name.split()) <= 8
+        and not name.endswith(".")
+    )
 
 
-def _suggested_questions(
-    graph: ExtractedGraph,
-    hotspots: list[dict[str, Any]],
-    surprises: list[dict[str, Any]],
-    communities: list[dict[str, Any]],
-    page_ids: set[str],
-) -> list[dict[str, Any]]:
-    """Generate exploration questions + answers derived from the graph (no LLM, no tokens).
-
-    Answers come from traversing Graphify's extracted graph in-process, so they are free,
-    deterministic, and need no live service.
-    """
-    by_id = {entity.id: entity for entity in graph.entities}
-    by_norm = {_norm(entity.name): entity for entity in graph.entities}
-    incoming: dict[str, list[str]] = defaultdict(list)
-    for assertion in graph.assertions:
-        subject = by_id.get(assertion.subject_id)
-        if subject is not None:
-            incoming[assertion.object_id].append(subject.name)
-
-    questions: list[dict[str, Any]] = []
-    for hotspot in hotspots[:4]:
-        entity = by_norm.get(_norm(hotspot["label"]))
-        dependents = sorted(set(incoming.get(entity.id, []))) if entity else []
-        if not dependents:
-            continue
-        shown = dependents[:6]
-        more = f" (+{len(dependents) - len(shown)} more)" if len(dependents) > len(shown) else ""
-        questions.append(
-            {
-                "question": f"What depends on {hotspot['label']}?",
-                "answer": ", ".join(shown) + more,
-                "wiki_url": _wiki_url(entity, page_ids),
-            }
-        )
-    for surprise in surprises[:3]:
-        if surprise.get("why"):
-            questions.append(
-                {
-                    "question": (
-                        f"Why does {surprise['source']} "
-                        f"{surprise.get('relation') or 'connect to'} {surprise['target']}?"
-                    ),
-                    "answer": surprise["why"],
-                    "wiki_url": surprise.get("source_wiki"),
-                }
-            )
-    for community in communities[:3]:
-        members = [m["name"] for m in community.get("members", [])][:6]
-        if not members:
-            continue
-        questions.append(
-            {
-                "question": f"What is the {community['label']} community responsible for?",
-                "answer": f"{community['size']} nodes incl. " + ", ".join(members),
-                "wiki_url": None,
-            }
-        )
-    return questions
+def _is_test_entity(entity: Entity) -> bool:
+    text = f"{entity.name} {entity.source_path or ''}".lower()
+    return "/test" in text or "tests/" in text or entity.name.startswith("test_")
 
 
-def build_quality(graph: ExtractedGraph) -> dict[str, Any]:
-    """Measure duplicates, self-loops, and multi-edges in extracted relationships."""
-    triple_counts: Counter[tuple[str, str, str]] = Counter()
-    pair_predicates: dict[tuple[str, str], set[str]] = defaultdict(set)
-    self_loops = 0
-    for assertion in graph.assertions:
-        triple_counts[(assertion.subject_id, assertion.predicate, assertion.object_id)] += 1
-        pair_predicates[(assertion.subject_id, assertion.object_id)].add(assertion.predicate)
-        if assertion.subject_id == assertion.object_id:
-            self_loops += 1
-    duplicate_edges = sum(count - 1 for count in triple_counts.values() if count > 1)
-    multi_edges = sum(1 for predicates in pair_predicates.values() if len(predicates) > 1)
-    total = len(graph.assertions)
+def _source_area(entity: Entity) -> str:
+    path = (entity.source_path or "").strip("/")
+    if not path:
+        return public_entity_type(entity)
+    parts = [part for part in path.split("/") if part not in {"data", "raw"}]
+    return "/".join(parts[:2]) if len(parts) > 1 else parts[0]
+
+
+def _lineage_type(entity: Entity) -> bool:
+    return bool(
+        entity.metadata.get("semantic_summary")
+        or entity.type
+        in {
+            EntityType.data_model,
+            EntityType.database,
+            EntityType.data_store,
+            EntityType.system,
+            EntityType.technology,
+        }
+    )
+
+
+def _lineage_label(entity: Entity, graph_kind: str, public_type: str) -> str:
+    if graph_kind == "repo" or entity.metadata.get("semantic_summary") is True:
+        return entity.name
+    return public_type
+
+
+def _lineage_row(
+    source: Entity,
+    target: Entity,
+    predicate: str,
+    row: dict[str, Any],
+) -> dict[str, Any]:
+    source_kind = entity_graph_kind(source)
+    target_kind = entity_graph_kind(target)
+    source_type = public_entity_type(source)
+    target_type = public_entity_type(target)
+    source_name = _lineage_label(source, source_kind, source_type)
+    target_name = _lineage_label(target, target_kind, target_type)
     return {
-        "total_relationships": total,
-        "duplicate_edges": duplicate_edges,
-        "multi_edge_pairs": multi_edges,
-        "self_loops": self_loops,
-        "clean": duplicate_edges == 0 and self_loops == 0,
+        **row,
+        "source": source_name,
+        "target": target_name,
+        "source_type": source_type,
+        "target_type": target_type,
+        "source_area": row["source_area"] if source_kind == "repo" else source_type,
+        "target_area": row["target_area"] if target_kind == "repo" else target_type,
+        "source_path": artifact_path(str(row.get("source_path") or "")) or None,
+        "predicate": predicate,
     }
+
+
+def _aggregate_cross_boundaries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: Counter[tuple[str, str, str]] = Counter()
+    for row in rows:
+        counts[(row["source_area"], row["target_area"], row["predicate"])] += 1
+    return [
+        {
+            "source": source_area,
+            "target": target_area,
+            "source_area": source_area,
+            "target_area": target_area,
+            "predicate": predicate,
+            "count": count,
+            "evidence": (
+                f"{count:,} component relationship{'s' if count != 1 else ''} cross this boundary."
+            ),
+        }
+        for (source_area, target_area, predicate), count in counts.most_common(20)
+    ]

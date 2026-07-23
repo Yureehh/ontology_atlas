@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from company_ontology_agent.config.project_config import default_config
-from company_ontology_agent.extraction.graphify_adapter import parse_graphify_graph
+from company_ontology_agent.extraction.code_map import write_code_map
+from company_ontology_agent.extraction.graphify_artifacts import parse_graphify_graph
 from company_ontology_agent.graph.cypher import EXPLORE_QUERIES
 from company_ontology_agent.graph.models import (
     Assertion,
@@ -44,7 +45,7 @@ def test_curated_projection_creates_explorable_architecture(tmp_path: Path) -> N
     )
     config = default_config("slidesmith-poc")
 
-    graph = build_curated_projection(project_root, config, ExtractedGraph(project_slug="base"))
+    graph = build_curated_projection(project_root, config)
 
     entity_types = {entity.type for entity in graph.entities}
     predicates = {assertion.predicate for assertion in graph.assertions}
@@ -68,23 +69,22 @@ def test_curated_projection_does_not_treat_generic_vector_as_pgvector(
     )
     config = default_config("vector-poc")
 
-    graph = build_curated_projection(tmp_path, config, ExtractedGraph(project_slug="base"))
+    graph = build_curated_projection(tmp_path, config)
 
     assert "pgvector" not in {entity.name for entity in graph.entities}
 
 
-def test_hardcoded_projection_and_local_fallback_are_disabled_by_default() -> None:
+def test_hardcoded_projection_is_disabled_by_default() -> None:
     config = default_config("default-poc")
 
     assert config.extraction.ontology_projection_enabled is False
-    assert config.extraction.local_fallback_enabled is False
 
 
 def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     graph = _small_graph()
     graphify_dir = tmp_path / "graphify-out"
     graphify_dir.mkdir()
-    for name in ["graph.html", "GRAPH_TREE.html", "GRAPH_REPORT.md"]:
+    for name in ["graph.html", "graph.raw.html", "GRAPH_TREE.html", "GRAPH_REPORT.md"]:
         (graphify_dir / name).write_text(name, encoding="utf-8")
 
     files = PortalBuilder().build(
@@ -99,12 +99,10 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
         "index.html",
         "ask.html",
         "explore.html",
-        "data-graph.html",
-        "repo.html",
         "intelligence.html",
-        "trust.html",
         "graph.json",
     } <= names
+    assert not (tmp_path / "portal/trust.html").exists()
     # Legacy single-page artifact must be gone.
     assert not (tmp_path / "portal/repo-ontology.html").exists()
 
@@ -126,18 +124,16 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     explore_data = bootstrap(explore_html)
     intel_data = bootstrap(intel_html)
     assert ask_data["page"] == "ask"
-    assert explore_data["page"] == "explore" and explore_data["kind"] == "all"
+    assert explore_data["page"] == "explore" and explore_data["kind"] == "repo"
     assert intel_data["page"] == "intelligence"
     # Shared shell + tabs render on the real pages.
     assert "Oracle Bets" in explore_html  # public_project_name strips "Ontology Atlas"
-    assert 'href="ask.html"' in explore_html and 'href="trust.html"' in explore_html
-    assert {node["name"] for node in explore_data["nodes"]} == {
-        "Backend",
-        "FastAPI",
-        "predict.py",
-        "Blue Team",
-        "Match 1",
-    }
+    assert 'href="ask.html"' in explore_html and 'href="changes.html"' in explore_html
+    assert 'href="trust.html"' not in explore_html
+    summary_names = {node["name"] for node in explore_data["nodes"]}
+    assert {"Blue Team", "Match 1"} <= summary_names
+    assert len(explore_data["nodes"]) <= 30 + 2
+    assert all(node["type"] != "BusinessEntity" for node in explore_data["nodes"])
 
     # The full graph.json keeps everything, flat, with rich link metadata.
     assert len(data["nodes"]) == 5 and len(data["links"]) == 2
@@ -149,11 +145,20 @@ def test_portal_build_writes_graph_and_index(tmp_path: Path) -> None:
     visual_types = {node["name"]: node["visual_type"] for node in data["nodes"]}
     assert visual_types["predict.py"] == "File" and visual_types["Blue Team"] == "Team"
 
-    # The heavy standalone Graphify graph is not part of the product deliverable.
+    # The curated code/docs map is available only as a clearly scoped diagnostic.
     assert {a["url"] for a in explore_data["artifacts"]} == {
+        "../graphify-out/graph.html",
+        "../graphify-out/graph.raw.html",
         "../graphify-out/GRAPH_TREE.html",
         "../graphify-out/GRAPH_REPORT.md",
     }
+    raw_map = next(
+        artifact
+        for artifact in explore_data["artifacts"]
+        if artifact["url"].endswith("graph.html")
+    )
+    assert raw_map["label"] == "Code & docs map"
+    assert "description" not in raw_map
 
 
 def test_key_relationship_ranking_promotes_api_data_and_model_edges() -> None:
@@ -302,6 +307,36 @@ def test_graphify_parser_preserves_rich_metadata(tmp_path: Path) -> None:
     assert graph.assertions[0].evidence_text == "Endpoint serializes reports."
 
 
+def test_code_map_is_bounded_and_preserves_raw_graphify_html(tmp_path: Path) -> None:
+    graph = ExtractedGraph(project_slug="portable")
+    for community in range(55):
+        for member in range(3):
+            entity_id = f"c{community}-{member}"
+            graph.entities.append(
+                Entity(
+                    id=entity_id,
+                    type=EntityType.module,
+                    name=f"VeryLongGeneratedRepositoryComponent{community}_{member}",
+                    normalized_name=entity_id,
+                    community=f"Community {community} with an excessively long generated title",
+                    source_path=f"packages/package-{community}/src/module-{member}.py",
+                )
+            )
+    graphify_out = tmp_path / "graphify-out"
+    graphify_out.mkdir()
+    (graphify_out / "graph.html").write_text("<html>raw graphify</html>", encoding="utf-8")
+
+    write_code_map(graph, graphify_out)
+
+    html = (graphify_out / "graph.html").read_text(encoding="utf-8")
+    assert 'data-ontology-atlas-code-map="true"' in html
+    assert "Code &amp; docs map" in html
+    assert html.count('class="community-card"') <= 40
+    assert (graphify_out / "graph.raw.html").read_text(encoding="utf-8") == (
+        "<html>raw graphify</html>"
+    )
+
+
 def test_neo4j_repository_writes_visual_relationships() -> None:
     client = FakeNeo4jClient()
     repository = Neo4jGraphRepository(client)
@@ -310,18 +345,38 @@ def test_neo4j_repository_writes_visual_relationships() -> None:
 
     statements = "\n".join(statement for statement, _ in client.calls)
     assert "MERGE (p:Project:DemoProject {slug: $slug})" in statements
-    assert "MERGE (e:DemoNode:Entity:Module {id: $id})" in statements
+    assert "MERGE (e:DemoNode:Entity:Module {id: row.id})" in statements
     assert "MERGE (p)-[r:HAS_ENTITY]->(e)" in statements
-    assert "MERGE (subject)-[r:USES {assertion_id: $assertion_id}]->(object)" in statements
-    assert "a.caption = $predicate" in statements
+    assert "MERGE (subject)-[r:USES {assertion_id: row.assertion_id}]->(object)" in statements
+    assert "a.caption = row.predicate" in statements
     assertion_props = next(
-        params["props"] for _, params in client.calls if params.get("id") == "a1"
+        row["props"]
+        for _, params in client.calls
+        for row in params.get("rows", [])
+        if row.get("id") == "a1"
     )
     assert "metadata_json" in assertion_props
     assert "metadata" not in assertion_props
-    entity_props = next(params["props"] for _, params in client.calls if params.get("id") == "e1")
+    entity_props = next(
+        row["props"]
+        for _, params in client.calls
+        for row in params.get("rows", [])
+        if row.get("id") == "e1"
+    )
     assert entity_props["caption"] == "Backend"
     assert entity_props["demo_node"] is True
+    assert len(client.calls) < 20
+
+
+def test_neo4j_repository_reads_only_current_graph_records() -> None:
+    client = FakeNeo4jClient()
+
+    Neo4jGraphRepository(client).read_graph("slidesmith-poc")
+
+    statements = "\n".join(statement for statement, _ in client.calls)
+    assert "[:HAS_ENTITY]->(e:Entity)" in statements
+    assert "coalesce(e.stale, false) = false" in statements
+    assert "coalesce(a.stale, false) = false" in statements
 
 
 class FakeNeo4jClient:

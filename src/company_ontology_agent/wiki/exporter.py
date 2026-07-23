@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections import defaultdict
 from pathlib import Path
 
 from markdown_it import MarkdownIt
@@ -10,6 +11,7 @@ from company_ontology_agent.graph.models import Assertion, Entity, EntityType, E
 from company_ontology_agent.portal.ranking import page_worthy_entity_ids
 from company_ontology_agent.utils.display import public_project_name
 from company_ontology_agent.utils.ids import slugify
+from company_ontology_agent.utils.source_paths import artifact_path
 from company_ontology_agent.wiki.relationships import key_relationship_sections
 from company_ontology_agent.wiki.templates import (
     TYPE_DIRS,
@@ -43,7 +45,6 @@ class WikiExporter:
             "requirements",
             "issues",
             "tasks",
-            "meetings",
             "modules",
             "apis",
             "sources",
@@ -98,6 +99,44 @@ class WikiExporter:
             )
             written.append(source_page)
 
+        # Graphify and deterministic connectors can cite original artifacts that
+        # are more specific than the graph-level Source records. Give every such
+        # citation a stable landing page so evidence links never dead-end.
+        assertions_by_path: dict[str, list[Assertion]] = defaultdict(list)
+        cited_paths: set[str] = set()
+        for entity in graph.entities:
+            if entity.source_path:
+                cited_paths.add(artifact_path(entity.source_path))
+        for assertion in graph.assertions:
+            subject = entities_by_id.get(assertion.subject_id)
+            object_ = entities_by_id.get(assertion.object_id)
+            paths = {
+                artifact_path(path)
+                for path in (
+                    assertion.source_path,
+                    subject.source_path if subject else None,
+                    object_.source_path if object_ else None,
+                )
+                if path
+            }
+            for path in paths:
+                cited_paths.add(path)
+                assertions_by_path[path].append(assertion)
+
+        declared_paths = {artifact_path(source.path) for source in graph.sources}
+        for path in sorted(cited_paths - declared_paths):
+            source_page = output_path / "sources" / source_filename(path)
+            source_page.write_text(
+                self._source_page(
+                    Path(path).name or path,
+                    path,
+                    assertions_by_path[path],
+                    entities_by_id,
+                ),
+                encoding="utf-8",
+            )
+            written.append(source_page)
+
         synthesized_pages = {
             "architecture.md": self._architecture_page(
                 graph, incoming, outgoing, entities_by_id, title
@@ -126,22 +165,6 @@ class WikiExporter:
         for filename, content in synthesized_pages.items():
             page = output_path / filename
             page.write_text(content, encoding="utf-8")
-            written.append(page)
-
-        for module in [entity for entity in graph.entities if entity.type == EntityType.module]:
-            page = output_path / "modules" / entity_filename(module)
-            page.write_text(
-                self._module_page(module, incoming.get(module.id, []), outgoing.get(module.id, [])),
-                encoding="utf-8",
-            )
-            written.append(page)
-
-        for api in [entity for entity in graph.entities if entity.type == EntityType.api_endpoint]:
-            page = output_path / "apis" / entity_filename(api)
-            page.write_text(
-                self._module_page(api, incoming.get(api.id, []), outgoing.get(api.id, [])),
-                encoding="utf-8",
-            )
             written.append(page)
 
         for domain in self._domains(graph):
@@ -221,7 +244,6 @@ class WikiExporter:
             "requirements",
             "issues",
             "tasks",
-            "meetings",
             "modules",
             "apis",
             "sources",
@@ -333,7 +355,7 @@ class WikiExporter:
             "",
         ]
         for module in sorted(modules, key=lambda item: item.name):
-            lines.append(f"- [[modules/{slugify(module.name)}|{module.name}]]")
+            lines.append(f"- [[{entity_wiki_ref(module)}|{module.name}]]")
         lines.extend(["", "## Technology Stack", ""])
         for technology in sorted(technologies, key=lambda item: item.name):
             lines.append(f"- [[{entity_wiki_ref(technology)}|{technology.name}]]")
@@ -420,38 +442,13 @@ class WikiExporter:
         return (
             f"# {display_name} Manager Demo Guide\n\n"
             "Demo flow:\n\n"
-            "1. Open Ask and run the Customer Profile impact question.\n"
+            "1. Open Ask and run an impact question about a core entity of this project.\n"
             "2. Expand its citations and explain authoritative versus extracted evidence.\n"
             "3. Open Explore and switch between Architecture and Business data layers.\n"
-            "4. Show Trust for source coverage, index freshness, and evaluation results.\n"
+            "4. Show the saved evaluation result for citation and retrieval quality.\n"
             "5. Use `GRAPH_TREE.html` only as secondary extraction diagnostics.\n\n"
             f"Current graph: {len(graph.entities)} entities, {len(graph.assertions)} assertions.\n"
         )
-
-    def _module_page(
-        self,
-        entity: Entity,
-        incoming: list[tuple[Assertion, Entity]],
-        outgoing: list[tuple[Assertion, Entity]],
-    ) -> str:
-        lines = [f"# {entity.name}", "", f"Type: `{entity.type.value}`", ""]
-        if entity.description:
-            lines.extend([entity.description, ""])
-        lines.extend(["## Outgoing", ""])
-        if not outgoing:
-            lines.append("- None")
-        for assertion, target in sorted(
-            outgoing, key=lambda item: (item[0].predicate, item[1].name)
-        ):
-            lines.append(f"- `{assertion.predicate}` [[{entity_wiki_ref(target)}|{target.name}]]")
-        lines.extend(["", "## Incoming", ""])
-        if not incoming:
-            lines.append("- None")
-        for assertion, source in sorted(
-            incoming, key=lambda item: (item[0].predicate, item[1].name)
-        ):
-            lines.append(f"- [[{entity_wiki_ref(source)}|{source.name}]] `{assertion.predicate}`")
-        return "\n".join(lines) + "\n"
 
     def _source_page(
         self,

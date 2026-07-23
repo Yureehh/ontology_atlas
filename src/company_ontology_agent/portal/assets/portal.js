@@ -4,14 +4,19 @@
   const SVGNS = "http://www.w3.org/2000/svg";
 
   const COLORS = {
-    System: "#38bdf8", Module: "#a7f3d0", Technology: "#fde68a", APIEndpoint: "#fca5a5",
+    System: "#38bdf8", ArchitectureGroup: "#38bdf8", Module: "#a7f3d0", Technology: "#fde68a", APIEndpoint: "#fca5a5",
     DataModel: "#c4b5fd", Database: "#93c5fd", DataStore: "#93c5fd", DeploymentUnit: "#fdba74",
     Config: "#f9a8d4", ExternalService: "#fcd34d", File: "#bae6fd", Class: "#ddd6fe",
-    Function: "#fecaca", Concept: "#94a3b8", BusinessEntity: "#86efac", Match: "#38bdf8",
-    Team: "#a7f3d0", League: "#facc15", Player: "#fda4af", Prediction: "#c4b5fd",
-    Market: "#fb923c", Bet: "#f97316", ModelArtifact: "#93c5fd",
+    Function: "#fecaca", Concept: "#94a3b8",
   };
   const DEFAULT_COLOR = "#94a3b8";
+  // Curated fallback palette for types without a named color: hashing a type into
+  // arbitrary hsl() produced clashing hues that changed meaning per graph. Hashing
+  // into a fixed palette keeps type→color stable and readable everywhere.
+  const EXTRA_COLORS = [
+    "#5eead4", "#f0abfc", "#fbbf24", "#86efac", "#7dd3fc", "#fda4af",
+    "#d8b4fe", "#fed7aa", "#a5b4fc", "#bef264", "#f9a8d4", "#67e8f9",
+  ];
 
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) =>
@@ -25,16 +30,20 @@
       .replace(/^-+|-+$/g, "");
     return slug ? `../wiki/sources/${slug}.html` : "#";
   }
+  function friendlyRelation(value) {
+    const raw = String(value || "related to").replace(/([a-z])([A-Z])/g, "$1 $2");
+    return raw.replaceAll("_", " ").toLowerCase();
+  }
+  function friendlyLabel(value) {
+    const label = friendlyRelation(value);
+    return label.charAt(0).toUpperCase() + label.slice(1);
+  }
   function el(tag, attrs, text) {
     const node = document.createElement(tag);
     if (attrs) for (const key in attrs) node.setAttribute(key, attrs[key]);
     if (text != null) node.textContent = text;
     return node;
   }
-  function link(url, text) {
-    return url ? `<a href="${esc(url)}">${esc(text)}</a>` : esc(text);
-  }
-
   // ---------- shared chrome ----------
   function renderMetrics(stats) {
     const host = document.getElementById("metrics");
@@ -54,7 +63,7 @@
 
   function artifactLinks(artifacts) {
     if (!artifacts || !artifacts.length) return '<span class="card-sub">None generated yet.</span>';
-    return artifacts.map((a) => `<div><a href="${esc(a.url)}">${esc(a.label)} →</a></div>`).join("");
+    return artifacts.map((a) => `<div class="artifact-link"><a href="${esc(a.url)}">${esc(a.label)} →</a></div>`).join("");
   }
 
   renderMetrics(DATA.stats);
@@ -71,12 +80,12 @@
     renderChanges(DATA.changes);
     return;
   }
-  if (DATA.page === "trust") {
-    renderTrust(DATA.trust);
-    return;
-  }
   if (DATA.page === "ask") {
     renderAsk(DATA);
+    return;
+  }
+  if (DATA.page === "sources") {
+    renderSources(DATA);
     return;
   }
   document.getElementById("graph-app").hidden = false;
@@ -87,10 +96,14 @@
     const kind = data.kind;
     let allNodes = data.nodes;
     let allLinks = data.links;
+    const overviewNodes = data.nodes;
+    const overviewLinks = data.links;
     const searchIndex = data.search_index || [];
     let nodeById = new Map(allNodes.map((n) => [n.id, n]));
     let linkById = new Map(allLinks.map((l) => [l.id, l]));
     let fullLoaded = false;
+    let fullGraphPromise = null;
+    let focusRequest = 0;
 
     const container = document.getElementById("graph");
     const selectionPanel = document.getElementById("selection");
@@ -102,6 +115,7 @@
 
     let selectedId = null;
     let selectedLinkId = null;
+    let architectureFocus = null;
     let keyOnly = false;
     let transform = { x: 0, y: 0, k: 1 };
 
@@ -109,6 +123,9 @@
     svg.setAttribute("width", "100%");
     svg.setAttribute("height", "100%");
     container.appendChild(svg);
+    const defs = document.createElementNS(SVGNS, "defs");
+    defs.innerHTML = '<marker id="dependency-arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="#52657f"/></marker>';
+    svg.appendChild(defs);
     const viewport = document.createElementNS(SVGNS, "g");
     svg.appendChild(viewport);
 
@@ -121,46 +138,75 @@
       return node.community || displayType(node) || "Other";
     }
     function colorFor(node) {
-      return COLORS[displayType(node)] || DEFAULT_COLOR;
+      const type = displayType(node);
+      if (COLORS[type]) return COLORS[type];
+      let hash = 0;
+      for (const character of String(type)) hash = (hash * 31 + character.charCodeAt(0)) | 0;
+      return EXTRA_COLORS[Math.abs(hash) % EXTRA_COLORS.length] || DEFAULT_COLOR;
     }
 
     // ---------- filter selects ----------
-    function fillSelect(select, label, values) {
+    function fillSelect(select, label, values, selected) {
       select.innerHTML =
         `<option value="">${esc(label)}</option>` +
-        values.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+        values.map((v) => `<option value="${esc(v.value)}">${esc(v.label)}</option>`).join("");
+      select.value = values.some((v) => v.value === selected) ? selected : "";
     }
-    fillSelect(predicateSelect, "All relationships",
-      [...new Set(allLinks.map((l) => l.predicate).filter(Boolean))].sort());
-    const datasets = [...new Set(allNodes.map((n) => n.dataset).filter(Boolean))].sort();
-    if (datasets.length) {
-      fillSelect(datasetSelect, "All datasets", datasets);
-    } else {
-      datasetSelect.hidden = true;
+    function optionCounts(values) {
+      const counts = new Map();
+      values.filter(Boolean).forEach((value) => counts.set(value, (counts.get(value) || 0) + 1));
+      return [...counts.entries()]
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+        .map(([value, count]) => ({ value, label: `${friendlyRelation(value)} (${count})` }));
     }
-
-    function filtered() {
+    function scopedNodes({ ignoreDataset = false } = {}) {
       const query = searchInput.value.trim().toLowerCase();
-      const predicate = predicateSelect.value;
-      const dataset = datasetSelect.value;
       const layer = layerSelect.value;
-      let nodes = allNodes;
+      const dataset = ignoreDataset ? "" : datasetSelect.value;
+      let nodes = layer === "repo" && !architectureFocus ? overviewNodes : allNodes;
       if (layer !== "all") nodes = nodes.filter((n) => n.graph_kind === layer);
+      if (architectureFocus && layer !== "data") {
+        nodes = nodes.filter((n) => n.graph_kind !== "repo" || n.architecture_group === architectureFocus || n.group_key === architectureFocus);
+      }
       if (query) {
         nodes = nodes.filter((n) =>
           [n.name, n.type, n.mapped_type, n.domain, n.dataset, n.source_path, n.community]
             .some((v) => String(v || "").toLowerCase().includes(query)));
       }
       if (dataset) nodes = nodes.filter((n) => n.dataset === dataset);
+      return nodes;
+    }
+    function scopedLinks() {
+      return layerSelect.value === "repo" && !architectureFocus ? overviewLinks : allLinks;
+    }
+    function refreshFacets() {
+      const selectedDataset = datasetSelect.value;
+      const selectedPredicate = predicateSelect.value;
+      const datasetNodes = scopedNodes({ ignoreDataset: true });
+      const datasets = optionCounts(datasetNodes.map((n) => n.dataset));
+      fillSelect(datasetSelect, "All datasets", datasets, selectedDataset);
+      datasetSelect.hidden = datasets.length === 0 || layerSelect.value === "repo";
+
+      const relationNodes = scopedNodes();
+      const ids = new Set(relationNodes.map((n) => n.id));
+      const relations = optionCounts(scopedLinks()
+        .filter((l) => ids.has(l.source) && ids.has(l.target))
+        .map((l) => l.predicate));
+      fillSelect(predicateSelect, "All relationships", relations, selectedPredicate);
+    }
+    refreshFacets();
+
+    function filtered() {
+      const predicate = predicateSelect.value;
+      let nodes = scopedNodes();
       let ids = new Set(nodes.map((n) => n.id));
-      let links = allLinks.filter((l) => ids.has(l.source) && ids.has(l.target));
+      let links = scopedLinks().filter((l) => ids.has(l.source) && ids.has(l.target));
       if (predicate) links = links.filter((l) => l.predicate === predicate);
       if (keyOnly) {
         links = links.filter((l) => l.key_relationship);
         const linked = new Set();
         links.forEach((l) => { linked.add(l.source); linked.add(l.target); });
         nodes = nodes.filter((n) => linked.has(n.id));
-        ids = linked;
       }
       return { nodes: nodes.map((n) => ({ ...n })), links };
     }
@@ -171,13 +217,14 @@
     // old freeze). Naive O(n²) repulsion is fine at the capped node count (~600 max);
     // swap in Barnes–Hut only if that cap ever grows past a couple thousand.
     function forceSpread(nodes, links, byId, width, height, centerOf) {
+      if (nodes.length > 700) return;
       const clusterCount = new Set(nodes.map((n) => (centerOf && centerOf(n)) || null)).size;
       // Many small clusters (repo communities) need stronger cohesion or repulsion
       // bleeds them into one blob; few large clusters (data types) can spread looser.
       const manyClusters = clusterCount > 12;
       const REPULSION = manyClusters ? 380 : 780;
       const SPRING = 0.03, SPRING_LEN = 34;
-      const GRAVITY = manyClusters ? 0.07 : 0.02;
+      const GRAVITY = manyClusters ? 0.22 : 0.14;
       const ITERS = 170, MAX_STEP = 26;
       const pairs = links
         .map((l) => [byId.get(l.source), byId.get(l.target)])
@@ -204,6 +251,9 @@
           }
         }
         for (const [a, b] of pairs) {
+          // Cross-domain relationships are drawn as arcs, but must not pull distinct
+          // domains back into one overlapping mass during layout.
+          if (centerOf && centerOf(a) !== centerOf(b)) continue;
           let dx = b.x - a.x, dy = b.y - a.y;
           const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
           const f = SPRING * (d - SPRING_LEN), ux = dx / d, uy = dy / d;
@@ -218,6 +268,47 @@
     }
 
     let view = { nodes: [], links: [], centers: new Map() };
+    function layoutArchitecture(nodes, links, width, height) {
+      const incoming = new Map(nodes.map((node) => [node.id, 0]));
+      const outgoing = new Map(nodes.map((node) => [node.id, []]));
+      links.forEach((link) => {
+        incoming.set(link.target, (incoming.get(link.target) || 0) + 1);
+        outgoing.get(link.source).push(link.target);
+      });
+      const rank = new Map(nodes.map((node) => [node.id, 0]));
+      const remainingIncoming = new Map(incoming);
+      const queue = nodes.filter((node) => remainingIncoming.get(node.id) === 0).map((node) => node.id);
+      const visited = new Set();
+      while (queue.length) {
+        const id = queue.shift();
+        visited.add(id);
+        (outgoing.get(id) || []).forEach((target) => {
+          rank.set(target, Math.min(5, Math.max(rank.get(target) || 0, (rank.get(id) || 0) + 1)));
+          remainingIncoming.set(target, (remainingIncoming.get(target) || 0) - 1);
+          if (remainingIncoming.get(target) === 0) queue.push(target);
+        });
+      }
+      const cycleColumns = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(nodes.length))));
+      nodes.filter((node) => !visited.has(node.id)).forEach((node, index) => rank.set(node.id, index % cycleColumns));
+      const columns = new Map();
+      nodes.forEach((node) => {
+        const column = rank.get(node.id) || 0;
+        if (!columns.has(column)) columns.set(column, []);
+        columns.get(column).push(node);
+      });
+      const ordered = [...columns.keys()].sort((a, b) => a - b);
+      ordered.forEach((column, columnIndex) => {
+        const members = columns.get(column).sort((a, b) => (incoming.get(b.id) || 0) - (incoming.get(a.id) || 0));
+        const rowGap = members.length > 1
+          ? Math.min(96, Math.max(64, (height - 140) / (members.length - 1)))
+          : 0;
+        members.forEach((node, rowIndex) => {
+          node.x = 90 + columnIndex * Math.max(190, (width - 180) / Math.max(1, ordered.length - 1));
+          node.y = 70 + rowIndex * rowGap;
+        });
+      });
+      return new Map();
+    }
     function layout() {
       const width = container.clientWidth || 800;
       const height = container.clientHeight || 600;
@@ -231,6 +322,13 @@
         degree.set(l.target, (degree.get(l.target) || 0) + 1);
       });
       f.nodes.forEach((n) => { n.degree = degree.get(n.id) || 0; });
+
+      const architectureOnly = f.nodes.length > 0 && f.nodes.every((node) => node.graph_kind === "repo");
+      if (architectureOnly) {
+        const centers = layoutArchitecture(f.nodes, links, width, height);
+        view = { nodes: f.nodes, links, centers, localById: local, architecture: true };
+        return;
+      }
 
       const groups = new Map();
       f.nodes.forEach((n) => {
@@ -290,7 +388,7 @@
         center.count = members.length;
       });
 
-      view = { nodes: f.nodes, links, centers, localById: local };
+      view = { nodes: f.nodes, links, centers, localById: local, architecture: false };
     }
 
     function applyTransform() {
@@ -307,6 +405,7 @@
       viewport.append(linkLayer, nodeLayer, labelLayer);
 
       const { nodes, links, centers, localById } = view;
+      const denseView = nodes.length > 500;
       if (!nodes.length) {
         const text = document.createElementNS(SVGNS, "text");
         text.setAttribute("x", (container.clientWidth || 800) / 2);
@@ -336,7 +435,8 @@
         label.setAttribute("y", center.labelY != null ? center.labelY : center.y);
         label.setAttribute("text-anchor", "middle");
         label.style.fontSize = (11 * invKc).toFixed(2) + "px";
-        label.textContent = key.length > 28 ? key.slice(0, 27) + "…" : key;
+        const clusterLabel = friendlyRelation(key).toUpperCase();
+        label.textContent = clusterLabel.length > 28 ? clusterLabel.slice(0, 27) + "…" : clusterLabel;
         labelLayer.appendChild(label);
       });
 
@@ -344,26 +444,40 @@
         const a = localById.get(link.source);
         const b = localById.get(link.target);
         if (!a || !b) return;
-        const line = document.createElementNS(SVGNS, "line");
+        const crossGroup = groupKey(a) !== groupKey(b);
+        const edge = document.createElementNS(SVGNS, crossGroup ? "path" : "line");
         const classes = ["link"];
+        if (crossGroup) classes.push("cross-domain");
         if (link.key_relationship) classes.push("key");
         if (link.confidence_tier === "inferred") classes.push("inferred");
         const touchesSel = selectedId && (link.source === selectedId || link.target === selectedId);
         if (selectedLinkId === link.id || touchesSel) classes.push("selected");
         else if (selectedId || selectedLinkId) classes.push("dim");
-        line.setAttribute("class", classes.join(" "));
-        line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-        line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-        line.setAttribute("stroke-width", (link.key_relationship ? 2 : 1.1) * invKc);
-        line.addEventListener("click", (e) => {
+        edge.setAttribute("class", classes.join(" "));
+        if (crossGroup) {
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const distance = Math.sqrt(dx * dx + dy * dy) || 1;
+          const bend = Math.min(72, Math.max(18, distance * .14));
+          const sign = String(link.source) < String(link.target) ? 1 : -1;
+          const controlX = (a.x + b.x) / 2 - (dy / distance) * bend * sign;
+          const controlY = (a.y + b.y) / 2 + (dx / distance) * bend * sign;
+          edge.setAttribute("d", `M ${a.x} ${a.y} Q ${controlX} ${controlY} ${b.x} ${b.y}`);
+        } else {
+          edge.setAttribute("x1", a.x); edge.setAttribute("y1", a.y);
+          edge.setAttribute("x2", b.x); edge.setAttribute("y2", b.y);
+        }
+        edge.setAttribute("stroke-width", (link.key_relationship ? 2 : 1.1) * invKc);
+        if (denseView && !link.key_relationship) edge.style.strokeOpacity = "0.1";
+        if (view.architecture) edge.setAttribute("marker-end", "url(#dependency-arrow)");
+        edge.addEventListener("click", (e) => {
           e.stopPropagation();
           selectedLinkId = link.id; selectedId = null;
           showLinkDetails(link.id); render();
         });
         const title = document.createElementNS(SVGNS, "title");
         title.textContent = `${a.name} —${link.predicate}→ ${b.name}`;
-        line.appendChild(title);
-        linkLayer.appendChild(line);
+        edge.appendChild(title);
+        linkLayer.appendChild(edge);
       });
 
       const neighborOf = new Set();
@@ -378,36 +492,96 @@
       // wall of overlapping text). invK keeps every label a constant on-screen size
       // regardless of the zoom transform, so they stay readable instead of ballooning.
       const invK = 1 / transform.k;
-      const cap = transform.k < 1.2 ? 16 : transform.k < 2 ? 44 : transform.k < 3 ? 90 : 150;
+      const cap = transform.k < 1.2 ? 28 : transform.k < 2 ? 44 : transform.k < 3 ? 90 : 150;
       // Circles grow slower than distances while zooming, so magnifying genuinely
       // opens space between nodes instead of magnifying the clutter.
       const rScale = transform.k < 1.2 ? 1 : transform.k < 2 ? 0.8 : transform.k < 3 ? 0.65 : 0.5;
-      const labelled = new Set(
-        [...nodes].sort((a, b) => b.degree - a.degree)
-          .slice(0, cap)
-          .map((n) => n.id));
+      let labelCandidates = [...nodes]
+        .filter((node) => transform.k >= 1.2 || node.extraction_source !== "portal_aggregate")
+        .sort((a, b) => b.degree - a.degree);
+      if (!view.architecture && transform.k < 1.2) {
+        const perCluster = new Map();
+        labelCandidates = labelCandidates.filter((node) => {
+          const name = String(node.name || "");
+          if (name.length > 24 || name.includes("_")) return false;
+          const key = groupKey(node);
+          const count = perCluster.get(key) || 0;
+          perCluster.set(key, count + 1);
+          return count < 2;
+        });
+      }
+      const labelled = new Set(labelCandidates.slice(0, cap).map((node) => node.id));
       if (selectedId) labelled.add(selectedId);
 
       nodes.forEach((node) => {
         const group = document.createElementNS(SVGNS, "g");
         const dim = selectedId && !neighborOf.has(node.id);
         group.setAttribute("class", `node${node.id === selectedId ? " selected" : ""}${dim ? " dim" : ""}`);
-        group.addEventListener("click", (e) => {
-          e.stopPropagation();
+        const activate = () => {
+          if (node.aggregate_kind === "architecture") {
+            drillArchitecture(node);
+            return;
+          }
           selectedId = node.id; selectedLinkId = null;
           showNodeDetails(node.id); render();
           if (history.replaceState) history.replaceState(null, "", "#node=" + encodeURIComponent(node.id));
-        });
-        const r = Math.max(3.5, Math.min(13, 4 + Math.sqrt(node.degree) * 1.7)) * rScale;
-        const circle = document.createElementNS(SVGNS, "circle");
-        circle.setAttribute("cx", node.x); circle.setAttribute("cy", node.y);
-        circle.setAttribute("r", r);
-        circle.setAttribute("fill", colorFor(node));
-        circle.setAttribute("fill-opacity", "0.92");
-        circle.setAttribute("stroke", "#050a12");
-        circle.setAttribute("stroke-width", "1.2");
-        group.appendChild(circle);
-        if (labelled.has(node.id)) {
+        };
+        group.addEventListener("click", (e) => { e.stopPropagation(); activate(); });
+        if (!denseView) {
+          group.setAttribute("tabindex", "0");
+          group.setAttribute("role", "button");
+          group.setAttribute("aria-label", `${node.name} (${displayType(node)})`);
+          group.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") { e.preventDefault(); activate(); }
+          });
+        }
+        const architectureCard = Boolean(view.architecture);
+        const baseRadius = denseView
+          ? Math.max(1.7, Math.min(4.4, 1.8 + Math.sqrt(node.degree) * 0.42))
+          : Math.max(3.5, Math.min(13, 4 + Math.sqrt(node.degree) * 1.7));
+        const r = baseRadius * rScale;
+        if (architectureCard) {
+          const rect = document.createElementNS(SVGNS, "rect");
+          rect.setAttribute("x", node.x - 76); rect.setAttribute("y", node.y - 30);
+          rect.setAttribute("width", 152); rect.setAttribute("height", 60);
+          rect.setAttribute("rx", 12); rect.setAttribute("class", "architecture-card");
+          rect.setAttribute("fill", colorFor(node));
+          group.appendChild(rect);
+          const titleText = document.createElementNS(SVGNS, "text");
+          titleText.setAttribute("x", node.x); titleText.setAttribute("y", node.y - 3);
+          titleText.setAttribute("class", "architecture-title");
+          titleText.textContent = node.name.length > 24 ? node.name.slice(0, 23) + "…" : node.name;
+          group.appendChild(titleText);
+          const metaText = document.createElementNS(SVGNS, "text");
+          metaText.setAttribute("x", node.x); metaText.setAttribute("y", node.y + 15);
+          metaText.setAttribute("class", "architecture-meta");
+          const cardMeta = node.description || (node.member_count ? `${node.member_count} components` : displayType(node));
+          metaText.textContent = cardMeta.length > 31 ? cardMeta.slice(0, 30) + "…" : cardMeta;
+          group.appendChild(metaText);
+        } else if (node.graph_kind === "data") {
+          // Data-layer nodes are squares, architecture nodes circles — a second
+          // channel besides color, so the layers stay distinguishable for
+          // color-blind users and in grayscale exports.
+          const square = document.createElementNS(SVGNS, "rect");
+          square.setAttribute("x", node.x - r); square.setAttribute("y", node.y - r);
+          square.setAttribute("width", r * 2); square.setAttribute("height", r * 2);
+          square.setAttribute("rx", Math.max(1, r * 0.3));
+          square.setAttribute("fill", colorFor(node));
+          square.setAttribute("fill-opacity", denseView ? "0.82" : "0.92");
+          square.setAttribute("stroke", "#050a12");
+          square.setAttribute("stroke-width", denseView ? "0.55" : "1.2");
+          group.appendChild(square);
+        } else {
+          const circle = document.createElementNS(SVGNS, "circle");
+          circle.setAttribute("cx", node.x); circle.setAttribute("cy", node.y);
+          circle.setAttribute("r", r);
+          circle.setAttribute("fill", colorFor(node));
+          circle.setAttribute("fill-opacity", denseView ? "0.82" : "0.92");
+          circle.setAttribute("stroke", "#050a12");
+          circle.setAttribute("stroke-width", denseView ? "0.55" : "1.2");
+          group.appendChild(circle);
+        }
+        if (!architectureCard && labelled.has(node.id)) {
           const text = document.createElementNS(SVGNS, "text");
           text.setAttribute("x", node.x);
           text.setAttribute("y", node.y + r + 9 * invK);
@@ -423,17 +597,69 @@
       applyTransform();
     }
 
-    function relayout() { layout(); render(); }
+    function relayout() {
+      refreshFacets();
+      layout();
+      render();
+      renderMetrics({ ...DATA.stats, shown_nodes: view.nodes.length });
+      const searchScope = window.location.protocol === "file:"
+        ? "Offline search covers these visible nodes."
+        : "Search covers every entity.";
+      hint.textContent = `Showing ${view.nodes.length} readable nodes from ${DATA.stats.total_nodes} canonical entities. ${searchScope}`;
+      renderArchitectureBreadcrumbs();
+    }
+
+    function renderArchitectureBreadcrumbs() {
+      const host = document.getElementById("architecture-breadcrumbs");
+      if (!host) return;
+      if (layerSelect.value !== "repo") { host.hidden = true; return; }
+      host.hidden = false;
+      host.innerHTML = architectureFocus
+        ? `<button id="architecture-back" class="ghost">Architecture</button><span>›</span><strong>${esc(architectureFocus)}</strong>`
+        : `<strong>Architecture overview</strong><span>${view.nodes.length} areas · Dependencies flow left to right · Select an area to drill in.</span>`;
+      const back = document.getElementById("architecture-back");
+      if (back) back.addEventListener("click", () => {
+        architectureFocus = null; selectedId = null; selectedLinkId = null;
+        updateUrlState(); scheduleRelayout();
+      });
+    }
+
+    async function drillArchitecture(node) {
+      if (!await loadFullGraph()) return;
+      architectureFocus = node.group_key || node.full_name || node.name;
+      layerSelect.value = "repo";
+      searchInput.value = "";
+      selectedId = null; selectedLinkId = null;
+      updateUrlState(); scheduleRelayout();
+    }
+
+    function updateUrlState() {
+      if (!history.replaceState) return;
+      const params = new URLSearchParams();
+      if (layerSelect.value !== "repo") params.set("layer", layerSelect.value);
+      if (searchInput.value.trim()) params.set("q", searchInput.value.trim());
+      if (predicateSelect.value) params.set("relation", predicateSelect.value);
+      if (datasetSelect.value) params.set("dataset", datasetSelect.value);
+      if (architectureFocus) params.set("focus", architectureFocus);
+      if (selectedId) params.set("node", selectedId);
+      history.replaceState(null, "", params.size ? `#${params}` : "#layer=repo");
+    }
 
     // ---------- details ----------
     function badge(text, tone) { return `<span class="badge ${tone || ""}">${esc(text)}</span>`; }
+    function evidenceBlock(evidence) {
+      const text = String(evidence || "");
+      if (!text) return "";
+      if (text.length <= 200) return `<div class="evidence">${esc(text)}</div>`;
+      return `<details class="evidence-more"><summary class="evidence">${esc(text.slice(0, 200))}…</summary><div class="evidence">${esc(text)}</div></details>`;
+    }
     function relList(items, side) {
       if (!items.length) return '<p class="placeholder">None detected.</p>';
       return items.map((l) => {
         const other = nodeById.get(l[side]);
-        return `<div class="rel"><strong>${esc(l.predicate)}</strong> ${other ? esc(other.name) : ""}
+        return `<div class="rel"><strong>${esc(friendlyRelation(l.predicate))}</strong> ${other ? esc(other.name) : ""}
           <div class="meta">confidence ${Number(l.confidence || 0).toFixed(2)}${l.confidence_tier ? " · " + esc(l.confidence_tier) : ""}</div>
-          ${l.evidence ? `<div class="evidence">${esc(String(l.evidence).slice(0, 200))}</div>` : ""}</div>`;
+          ${evidenceBlock(l.evidence)}</div>`;
       }).join("");
     }
     function showNodeDetails(id) {
@@ -450,8 +676,12 @@
           <strong>Type</strong> ${esc(displayType(node))}<br>
           ${node.community ? `<strong>Community</strong> ${esc(node.community)}<br>` : ""}
           ${node.dataset ? `<strong>Dataset</strong> ${esc(node.dataset)}<br>` : ""}
+          ${node.member_count ? `<strong>Records / members</strong> ${Number(node.member_count).toLocaleString()}<br>` : ""}
+          ${node.connector ? `<strong>Connector</strong> ${esc(node.connector)}<br>` : ""}
+          ${node.authority ? `<strong>Authority</strong> ${esc(node.authority)}<br>` : ""}
           ${node.source_path ? `<strong>Source</strong> <code>${esc(node.source_path)}</code><br>` : ""}
         </div>
+        ${(node.source_paths || []).length > 1 ? `<details><summary>Source artifacts (${node.source_paths.length})</summary>${node.source_paths.map((path) => `<div class="answer-meta"><code>${esc(path)}</code></div>`).join("")}</details>` : ""}
         ${node.description ? `<p class="evidence">${esc(node.description)}</p>` : ""}
         ${wiki}
         <button id="impact-btn" class="ghost" style="margin:8px 0">What depends on this →</button>
@@ -541,18 +771,44 @@
       const rect = svg.getBoundingClientRect();
       zoomAround(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-e.deltaY * 0.0012));
     }, { passive: false });
+    // Pointer events cover mouse AND touch: one-finger drag pans, two fingers pinch-zoom.
     let drag = null;
-    svg.addEventListener("mousedown", (e) => {
+    let pinch = null;
+    const activePointers = new Map();
+    svg.addEventListener("pointerdown", (e) => {
       if (e.target.closest(".node") || e.target.closest(".link")) return;
-      drag = { x: e.clientX, y: e.clientY, tx: transform.x, ty: transform.y };
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (svg.setPointerCapture) svg.setPointerCapture(e.pointerId);
+      if (activePointers.size === 1) {
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, tx: transform.x, ty: transform.y };
+      } else if (activePointers.size === 2) {
+        drag = null;
+        const [a, b] = [...activePointers.values()];
+        pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) || 1, k: transform.k };
+      }
     });
-    window.addEventListener("mousemove", (e) => {
-      if (!drag) return;
-      transform.x = drag.tx + e.clientX - drag.x;
-      transform.y = drag.ty + e.clientY - drag.y;
-      applyTransform();
+    svg.addEventListener("pointermove", (e) => {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch && activePointers.size === 2) {
+        const [a, b] = [...activePointers.values()];
+        const rect = svg.getBoundingClientRect();
+        const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        const targetK = clampScale(pinch.k * (distance / pinch.distance));
+        zoomAround((a.x + b.x) / 2 - rect.left, (a.y + b.y) / 2 - rect.top, targetK / transform.k);
+      } else if (drag && e.pointerId === drag.id) {
+        transform.x = drag.tx + e.clientX - drag.x;
+        transform.y = drag.ty + e.clientY - drag.y;
+        applyTransform();
+      }
     });
-    window.addEventListener("mouseup", () => { drag = null; });
+    const endPointer = (e) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) pinch = null;
+      if (drag && e.pointerId === drag.id) drag = null;
+    };
+    svg.addEventListener("pointerup", endPointer);
+    svg.addEventListener("pointercancel", endPointer);
     svg.addEventListener("click", () => { clearSelection(); render(); });
 
     // ---------- legend ----------
@@ -560,38 +816,84 @@
       const present = [...new Set(view.nodes.map(displayType))].sort();
       const legend = document.getElementById("legend");
       legend.innerHTML =
-        present.map((t) => `<div class="legend-row"><span class="swatch" style="background:${COLORS[t] || DEFAULT_COLOR}"></span>${esc(t)}</div>`).join("") +
+        present.map((t) => `<div class="legend-row"><span class="swatch" style="background:${COLORS[t] || DEFAULT_COLOR}"></span>${esc(t === "ArchitectureGroup" ? "Architecture area" : friendlyLabel(t))}</div>`).join("") +
         `<div class="legend-row"><span class="swatch line" style="background:var(--accent)"></span>Key relationship</div>` +
-        `<div class="legend-row"><span class="swatch line" style="background:#44566f"></span>Standard / inferred</div>`;
+        `<div class="legend-row"><span class="swatch line" style="background:#44566f"></span>Standard / inferred</div>` +
+        `<div class="legend-row"><span class="swatch"></span>Architecture (circle)</div>` +
+        `<div class="legend-row"><span class="swatch square"></span>Business data (square)</div>`;
     }
 
     // ---------- search across ALL entities (not just the plotted subset) ----------
     const resultsBox = document.getElementById("search-results");
-    function runSearch() {
-      const query = searchInput.value.trim().toLowerCase();
-      if (query.length < 2) { resultsBox.hidden = true; resultsBox.innerHTML = ""; return; }
-      const hits = searchIndex
-        .filter((e) => String(e.n || "").toLowerCase().includes(query)
-          || String(e.t || "").toLowerCase().includes(query))
-        .slice(0, 40);
+    let searchTimer = null;
+    let searchAbort = null;
+    let searchRequest = 0;
+    function renderSearchHits(hits) {
       if (!hits.length) {
         resultsBox.hidden = false;
         resultsBox.innerHTML = '<div class="result muted">No matches.</div>';
         return;
       }
       resultsBox.hidden = false;
+      resultsBox.setAttribute("role", "listbox");
       resultsBox.innerHTML = hits.map((h) => {
         const plotted = nodeById.has(h.i);
-        return `<div class="result" data-id="${esc(h.i)}" data-wiki="${esc(h.w || "")}">
+        return `<div class="result" role="option" tabindex="0" data-id="${esc(h.i)}" data-wiki="${esc(h.w || "")}">
           <span class="result-name">${esc(h.n)}</span>
           <span class="result-meta">${esc(h.t || "")}${plotted ? "" : " · not plotted"}</span>
         </div>`;
       }).join("");
       resultsBox.querySelectorAll(".result[data-id]").forEach((row) => {
         row.addEventListener("click", () => focusEntity(row.dataset.id, row.dataset.wiki));
+        row.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { e.preventDefault(); focusEntity(row.dataset.id, row.dataset.wiki); }
+          else if (e.key === "ArrowDown") { e.preventDefault(); (row.nextElementSibling || row).focus(); }
+          else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (row.previousElementSibling) row.previousElementSibling.focus();
+            else searchInput.focus();
+          }
+        });
       });
     }
+    function localSearch(query) {
+      return searchIndex
+        .filter((e) => String(e.n || "").toLowerCase().includes(query)
+          || String(e.t || "").toLowerCase().includes(query))
+        .slice(0, 40);
+    }
+    async function runRemoteSearch(query, layer, localHits, request) {
+      if (window.location.protocol === "file:" || !data.entity_search_url) return;
+      searchAbort = new AbortController();
+      try {
+        const params = new URLSearchParams({ q: query, layer, limit: "40" });
+        const response = await fetch(`${data.entity_search_url}?${params}`, {
+          cache: "no-store",
+          signal: searchAbort.signal,
+        });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (request !== searchRequest
+          || searchInput.value.trim().toLowerCase() !== query
+          || layerSelect.value !== layer) return;
+        renderSearchHits(payload.results || localHits);
+      } catch (error) {
+        // Visible-graph search remains available when the local API is offline.
+      }
+    }
+    function scheduleSearch() {
+      const query = searchInput.value.trim().toLowerCase();
+      const request = ++searchRequest;
+      if (searchTimer) clearTimeout(searchTimer);
+      if (searchAbort) searchAbort.abort();
+      if (query.length < 2) { resultsBox.hidden = true; resultsBox.innerHTML = ""; return; }
+      const localHits = localSearch(query);
+      renderSearchHits(localHits);
+      const layer = layerSelect.value;
+      searchTimer = setTimeout(() => runRemoteSearch(query, layer, localHits, request), 250);
+    }
     function focusEntity(id, wikiUrl) {
+      const request = ++focusRequest;
       if (nodeById.has(id)) {
         selectedId = id; selectedLinkId = null;
         showNodeDetails(id); render();
@@ -601,7 +903,12 @@
       // Not plotted: pull the full graph if we can, otherwise fall back to the wiki page.
       if (!fullLoaded) {
         loadFullGraph().then((ok) => {
-          if (ok && nodeById.has(id)) focusEntity(id);
+          if (request !== focusRequest) return;
+          if (ok && nodeById.has(id)) {
+            selectedId = id; selectedLinkId = null;
+            showNodeDetails(id); render();
+            if (history.replaceState) history.replaceState(null, "", "#node=" + encodeURIComponent(id));
+          }
           else if (wikiUrl) window.location.href = wikiUrl;
         });
       } else if (wikiUrl) {
@@ -612,22 +919,32 @@
     // ---------- lazy-load the complete graph on demand ----------
     async function loadFullGraph() {
       if (fullLoaded) return true;
+      if (fullGraphPromise) return fullGraphPromise;
       const btn = document.getElementById("load-full");
-      try {
-        const resp = await fetch(data.full_graph_url, { cache: "no-store" });
-        const full = await resp.json();
-        allNodes = full.nodes || [];
-        allLinks = full.links || [];
-        nodeById = new Map(allNodes.map((n) => [n.id, n]));
-        linkById = new Map(allLinks.map((l) => [l.id, l]));
-        fullLoaded = true;
-        if (btn) { btn.textContent = `Full graph loaded (${allNodes.length} nodes)`; btn.disabled = true; }
-        relayout(); renderLegend();
-        return true;
-      } catch (err) {
-        if (btn) { btn.textContent = "Open graph.json (offline)"; }
-        return false;
-      }
+      if (btn) { btn.textContent = "Loading full graph…"; btn.disabled = true; }
+      container.classList.add("loading");
+      fullGraphPromise = (async () => {
+        try {
+          const resp = await fetch(data.full_graph_url, { cache: "no-store" });
+          if (!resp.ok) throw new Error(`Graph request failed: ${resp.status}`);
+          const full = await resp.json();
+          allNodes = full.nodes || [];
+          allLinks = full.links || [];
+          nodeById = new Map(allNodes.map((n) => [n.id, n]));
+          linkById = new Map(allLinks.map((l) => [l.id, l]));
+          fullLoaded = true;
+          if (btn) { btn.textContent = `Full graph loaded (${allNodes.length} nodes)`; btn.disabled = true; }
+          relayout(); renderLegend();
+          return true;
+        } catch (err) {
+          fullGraphPromise = null;
+          if (btn) { btn.textContent = "Open graph.json (offline)"; btn.disabled = false; }
+          return false;
+        } finally {
+          container.classList.remove("loading");
+        }
+      })();
+      return fullGraphPromise;
     }
 
     // ---------- export the current view ----------
@@ -673,19 +990,28 @@
     }
 
     // ---------- wiring ----------
-    let raf = null;
+    let layoutTimer = null;
     function scheduleRelayout() {
-      if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => { raf = null; relayout(); renderLegend(); });
+      if (layoutTimer) clearTimeout(layoutTimer);
+      layoutTimer = setTimeout(() => {
+        layoutTimer = null; relayout(); renderLegend();
+      }, 120);
     }
-    searchInput.addEventListener("input", () => { runSearch(); scheduleRelayout(); });
+    searchInput.addEventListener("input", () => { scheduleSearch(); updateUrlState(); scheduleRelayout(); });
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown") return;
+      const first = resultsBox.querySelector(".result[data-id]");
+      if (first) { e.preventDefault(); first.focus(); }
+    });
     document.getElementById("load-full").addEventListener("click", loadFullGraph);
     document.getElementById("export-svg").addEventListener("click", exportSvg);
     document.getElementById("export-png").addEventListener("click", exportPng);
-    predicateSelect.addEventListener("change", scheduleRelayout);
-    datasetSelect.addEventListener("change", scheduleRelayout);
+    predicateSelect.addEventListener("change", () => { updateUrlState(); scheduleRelayout(); });
+    datasetSelect.addEventListener("change", () => { updateUrlState(); scheduleRelayout(); });
     layerSelect.addEventListener("change", () => {
-      if (history.replaceState) history.replaceState(null, "", "#layer=" + layerSelect.value);
+      architectureFocus = null;
+      updateUrlState();
+      if (searchInput.value.trim().length >= 2) scheduleSearch();
       scheduleRelayout();
     });
     document.getElementById("key-only").addEventListener("click", (e) => {
@@ -693,7 +1019,8 @@
     });
     document.getElementById("reset").addEventListener("click", () => {
       searchInput.value = ""; predicateSelect.value = ""; datasetSelect.value = "";
-      layerSelect.value = "all";
+      layerSelect.value = "repo";
+      architectureFocus = null;
       keyOnly = false; document.getElementById("key-only").classList.remove("active");
       clearSelection(); fit(); scheduleRelayout();
     });
@@ -706,6 +1033,12 @@
     document.getElementById("fit").addEventListener("click", fit);
     document.getElementById("hide-details").addEventListener("click", () => {
       app.classList.add("details-collapsed");
+      document.getElementById("show-details").hidden = false;
+      requestAnimationFrame(relayout);
+    });
+    document.getElementById("show-details").addEventListener("click", () => {
+      app.classList.remove("details-collapsed");
+      document.getElementById("show-details").hidden = true;
       requestAnimationFrame(relayout);
     });
     let resizeTimer = null;
@@ -715,20 +1048,26 @@
     });
 
     const hint = document.getElementById("hint");
-    hint.textContent = `Showing ${DATA.stats.shown_nodes} of ${DATA.stats.total_nodes} nodes across one canonical graph — ranked by importance. Search covers all ${DATA.stats.total_nodes}.`;
+    hint.textContent = window.location.protocol === "file:"
+      ? `Showing ${DATA.stats.shown_nodes} readable nodes. Serve the portal for full-corpus search across ${DATA.stats.total_nodes}.`
+      : `Showing ${DATA.stats.shown_nodes} readable nodes. Search covers all ${DATA.stats.total_nodes} canonical entities.`;
 
     // Deep-link support: #node=<id> focuses that node on load.
     function applyHash() {
-      const layerMatch = /[#&]layer=([^&]+)/.exec(window.location.hash);
-      if (layerMatch && ["all", "repo", "data"].includes(layerMatch[1])) {
-        layerSelect.value = layerMatch[1];
-        relayout();
-      }
-      const match = /[#&]node=([^&]+)/.exec(window.location.hash);
-      if (match) focusEntity(decodeURIComponent(match[1]), null);
+      const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+      const layer = params.get("layer") || data.kind || "repo";
+      if (["all", "repo", "data"].includes(layer)) layerSelect.value = layer;
+      searchInput.value = params.get("q") || "";
+      architectureFocus = params.get("focus");
+      refreshFacets();
+      datasetSelect.value = params.get("dataset") || "";
+      predicateSelect.value = params.get("relation") || "";
+      relayout(); renderLegend();
+      const node = params.get("node");
+      if (node) focusEntity(node, null);
     }
 
-    requestAnimationFrame(() => { relayout(); renderLegend(); applyHash(); });
+    requestAnimationFrame(applyHash);
   }
 
   // ---------- answer-first GraphRAG ----------
@@ -767,12 +1106,15 @@
         const response = await fetch(data.rag_status_url, { cache: "no-store" });
         const payload = await response.json();
         const ready = Boolean(payload.ready);
-        status.className = `status-card ${ready ? "ready" : "warn"}`;
-        status.textContent = ready
-          ? `Ready · ${Number(payload.chunk_count || 0).toLocaleString()} indexed knowledge chunks`
+        const stale = Boolean(payload.stale);
+        status.hidden = ready && !stale;
+        status.className = `status-card ${ready && !stale ? "ready" : "warn"}`;
+        status.textContent = ready && !stale
+          ? ""
           : (payload.message || "GraphRAG is not indexed yet. Run ontology-agent rag index.");
         submit.disabled = !ready;
       } catch (error) {
+        status.hidden = false;
         status.className = "status-card warn";
         status.textContent = "GraphRAG service is unavailable. Serve the portal from the project directory.";
         submit.disabled = true;
@@ -782,19 +1124,23 @@
     function renderAnswer(payload) {
       const citations = payload.citations || payload.supporting_chunks || [];
       const paths = payload.paths || [];
-      const neighborhood = paths.map((path) => {
+      const answerHtml = payload.answer_html || `<p>${esc(payload.answer || "No answer returned.")}</p>`;
+      const neighborhoodRows = paths.map((path) => {
         const summary = Array.isArray(path) ? path.join(" → ") : path.summary || String(path);
         const match = /^(.*?) -\[(.*?)\]-> (.*)$/.exec(summary);
         return match
-          ? `<div class="mini-edge"><span class="mini-node">${esc(match[1])}</span><span class="mini-rel">${esc(match[2])} →</span><span class="mini-node">${esc(match[3])}</span></div>`
+          ? `<div class="mini-edge"><span class="mini-node">${esc(match[1])}</span><span class="mini-rel">${esc(friendlyRelation(match[2]))} →</span><span class="mini-node">${esc(match[3])}</span></div>`
           : `<div class="path-row">${esc(summary)}</div>`;
-      }).join("");
+      });
+      const neighborhood = neighborhoodRows.slice(0, 6).join("");
+      const moreNeighborhood = neighborhoodRows.length > 6
+        ? `<details class="more-paths"><summary>${neighborhoodRows.length - 6} more paths</summary>${neighborhoodRows.slice(6).join("")}</details>`
+        : "";
       result.hidden = false;
       result.innerHTML = `
         <article class="answer-card">
-          <div class="answer-meta">Trace ${esc(payload.trace_id || "unknown")}</div>
           <h3>Grounded answer</h3>
-          <div class="answer-copy">${esc(payload.answer || "No answer returned.")}</div>
+          <div class="answer-copy">${answerHtml}</div>
           ${(payload.warnings || []).map((w) => `<div class="note">${esc(w)}</div>`).join("")}
         </article>
         <section class="answer-grid">
@@ -802,7 +1148,7 @@
             <details ${i === 0 ? "open" : ""}><summary><a href="${sourceWikiHref(c.source_path || c.path)}">${esc(c.source_path || c.path || `Source ${i + 1}`)}</a></summary>
             <p class="evidence">${esc(c.evidence || c.text || "")}</p>
             <div class="answer-meta">${esc(c.evidence_level || "evidence_backed")}${c.score != null ? ` · score ${Number(c.score).toFixed(3)}` : ""}</div></details>`).join("") : '<p class="placeholder">No supporting evidence was retrieved.</p>'}</article>
-          <article class="card"><h3>Answer neighborhood</h3>${neighborhood || '<p class="placeholder">No relationship path was returned.</p>'}</article>
+          <article class="card"><h3>Answer neighborhood</h3>${neighborhood || '<p class="placeholder">No relationship path was returned.</p>'}${moreNeighborhood}</article>
         </section>`;
     }
 
@@ -838,34 +1184,86 @@
     refreshStatus();
   }
 
-  function renderTrust(trust) {
+  // ---------- sources browser (full text straight from Neo4j) ----------
+  function renderSources(data) {
     const host = document.getElementById("intel-app");
     host.hidden = false;
-    const levels = (trust && trust.evidence_levels) || {};
-    const coverage = (trust && trust.source_coverage) || {};
-    const quality = trust && trust.quality;
-    const indexStatus = trust && trust.index_status;
-    const evaluation = trust && trust.rag_evaluation;
-    const artifacts = DATA.artifacts || [];
+    if (window.location.protocol === "file:") {
+      host.innerHTML = `<div class="empty-state">Browsing source text requires the live portal.<br>
+        Run <code>ontology-agent portal serve</code> and reload this page.</div>`;
+      return;
+    }
     host.innerHTML = `
-      <section class="intel-section"><h2>Evidence coverage</h2><p class="lead">Trust is explicit: authoritative facts, evidence-backed extraction, and weak claims remain distinguishable.</p>
-        <div class="grid cols-3">
-          <div class="card"><div class="card-title">Authoritative</div><div class="metric-inline">${Number(levels.authoritative || 0).toLocaleString()}</div></div>
-          <div class="card"><div class="card-title">Evidence-backed</div><div class="metric-inline">${Number(levels.evidence_backed || 0).toLocaleString()}</div></div>
-          <div class="card"><div class="card-title">Weak / review</div><div class="metric-inline">${Number(levels.weak || 0).toLocaleString()}</div></div>
-          <div class="card"><div class="card-title">Source coverage</div><div class="metric-inline">${Number(coverage.percent || 0).toFixed(1)}%</div><div class="card-sub">${Number(coverage.covered || 0)} of ${Number(coverage.total || 0)} relationships</div></div>
-          <div class="card"><div class="card-title">Rejected assertions</div><div class="metric-inline">${Number(trust && trust.rejected_assertions || 0)}</div></div>
-          <div class="card"><div class="card-title">Index freshness</div><div class="card-sub">${indexStatus ? esc(indexStatus.indexed_at) : "Not indexed"}</div>${indexStatus ? `<div class="answer-meta">${Number(indexStatus.total || 0)} chunks · ${esc(indexStatus.embedding_model || "unknown model")}</div>` : ""}</div>
-        </div></section>
-      ${quality ? `<section class="intel-section"><h2>Structural quality</h2><p class="lead">Relationship hygiene is measured separately from answer quality.</p><div class="grid cols-3">
-        <div class="card"><div class="card-title">Relationships</div><div class="metric-inline">${Number(quality.total_relationships || 0).toLocaleString()}</div></div>
-        <div class="card"><div class="card-title">Duplicate edges</div><div class="metric-inline">${Number(quality.duplicate_edges || 0)}</div></div>
-        <div class="card"><div class="card-title">Self-loops</div><div class="metric-inline">${Number(quality.self_loops || 0)}</div></div>
-      </div></section>` : ""}
-      <section class="intel-section"><h2>GraphRAG evaluation</h2><p class="lead">Golden questions verify retrieval, citation validity, and correct refusal.</p>
-        ${evaluation ? `<div class="card"><pre>${esc(JSON.stringify(evaluation, null, 2))}</pre></div>` : '<div class="empty-state">No evaluation has been run yet. Use <code>ontology-agent rag evaluate</code>.</div>'}
-      </section>
-      ${artifacts.length ? `<section class="intel-section"><h2>Diagnostics and evidence</h2><p class="lead">Secondary Graphify artifacts for technical investigation.</p><div class="grid cols-3">${artifacts.map((a) => `<div class="card"><div class="card-title">${link(a.url, a.label)}</div></div>`).join("")}</div></section>` : ""}`;
+      <section class="intel-section sources-app">
+        <h2>Ingested sources</h2>
+        <p class="lead">Every source stored in Neo4j, with its full text. Documents are chunked;
+        code and structured artifacts show their extracted evidence spans.</p>
+        <input id="source-filter" placeholder="Filter sources by path or type…" autocomplete="off"
+          aria-label="Filter sources">
+        <div class="sources-split">
+          <div id="source-list" class="sources-list" role="listbox" aria-label="Sources">
+            <p class="placeholder">Loading sources…</p>
+          </div>
+          <div id="source-body" class="source-body">
+            <p class="placeholder">Select a source to read its full text.</p>
+          </div>
+        </div>
+      </section>`;
+    const list = document.getElementById("source-list");
+    const body = document.getElementById("source-body");
+    const filter = document.getElementById("source-filter");
+    let sources = [];
+    let activeId = null;
+
+    function renderList() {
+      const query = filter.value.trim().toLowerCase();
+      const visible = sources.filter((s) =>
+        !query || s.path.toLowerCase().includes(query) || s.source_type.toLowerCase().includes(query));
+      list.innerHTML = visible.map((s) => {
+        const pieces = String(s.path || s.title).split("/");
+        const file = pieces.pop();
+        const dir = pieces.length ? pieces.join("/") + "/" : "";
+        const count = s.chunk_count
+          ? `${s.chunk_count} chunk${s.chunk_count === 1 ? "" : "s"}`
+          : s.span_count ? `${s.span_count} span${s.span_count === 1 ? "" : "s"}` : "";
+        return `
+        <div class="result source-row${s.id === activeId ? " active" : ""}" role="option"
+          tabindex="0" aria-selected="${s.id === activeId}" data-id="${esc(s.id)}">
+          <div class="source-path"><span class="source-dir">${esc(dir)}</span>${esc(file)}</div>
+          <div class="source-meta"><span class="chip">${esc(s.source_type)}</span>${count ? `<span class="source-count">${count}</span>` : ""}</div>
+        </div>`;
+      }).join("") || '<p class="placeholder">No sources match.</p>';
+      list.querySelectorAll(".source-row").forEach((row) => {
+        const open = () => openSource(row.dataset.id);
+        row.addEventListener("click", open);
+        row.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); open(); }
+        });
+      });
+    }
+
+    async function openSource(id) {
+      activeId = id;
+      renderList();
+      const source = sources.find((s) => s.id === id);
+      body.innerHTML = '<p class="placeholder">Loading text…</p>';
+      try {
+        const response = await fetch(`${data.sources_url}/${encodeURIComponent(id)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error(response.status === 404 ? "This source has no stored text." : "Source text is unavailable.");
+        const payload = await response.json();
+        body.innerHTML = `
+          <h3 class="detail-title">${esc(source ? source.path : id)}</h3>
+          ${(payload.chunks || []).map((chunk) => `<pre class="source-text">${esc(chunk.text)}</pre>`).join("")}`;
+      } catch (error) {
+        body.innerHTML = `<div class="status-card warn">${esc(error.message || error)}</div>`;
+      }
+    }
+
+    filter.addEventListener("input", renderList);
+    fetch(data.sources_url, { cache: "no-store" })
+      .then((response) => { if (!response.ok) throw new Error("Source listing is unavailable."); return response.json(); })
+      .then((payload) => { sources = payload.sources || []; renderList(); })
+      .catch((error) => { list.innerHTML = `<div class="status-card warn">${esc(error.message || error)}</div>`; });
   }
 
   // ---------- intelligence dashboard ----------
@@ -878,91 +1276,44 @@
         surprising connections, and community cohesion.</div>`;
       return;
     }
-    const sections = [];
-
-    const maxDeg = Math.max(1, ...intel.hotspots.map((h) => h.degree));
-    sections.push(`
-      <div class="intel-section">
-        <h2>Architecture hotspots</h2>
-        <p class="lead">The most connected "god" nodes — high-traffic hubs worth reviewing for coupling and refactor risk.</p>
-        <div class="grid cols-2">
-          ${intel.hotspots.map((h, i) => `
-            <div class="card">
-              <div class="hotspot">
-                <div><div class="card-title">${i + 1}. ${link(h.wiki_url, h.label)}</div>
-                ${h.community ? `<div class="card-sub">${esc(h.community)}</div>` : ""}</div>
-                <div class="rank">${h.degree} links</div>
-              </div>
-              <div class="bar"><span style="width:${Math.round((h.degree / maxDeg) * 100)}%"></span></div>
-            </div>`).join("") || `<p class="placeholder">No hotspots detected.</p>`}
-        </div>
-      </div>`);
-
-    sections.push(`
-      <div class="intel-section">
-        <h2>Surprising connections</h2>
-        <p class="lead">Links Graphify flagged as unexpected — they bridge separate communities or cross directory boundaries.</p>
-        <div class="grid cols-2">
-          ${intel.surprises.map((s) => `
-            <div class="card">
-              <div class="card-title">${link(s.source_wiki, s.source)} <span class="card-sub">${esc(s.relation || "→")}</span> ${link(s.target_wiki, s.target)}</div>
-              ${s.why ? `<p class="card-sub">${esc(s.why)}</p>` : ""}
-              <div>${(s.source_files || []).map((f) => `<span class="chip">${esc(f)}</span>`).join("")}</div>
-            </div>`).join("") || `<p class="placeholder">No surprising connections detected.</p>`}
-        </div>
-      </div>`);
-
-    const refactor = intel.refactor_candidates || [];
-    if (refactor.length) {
-      sections.push(`
-        <div class="intel-section">
-          <h2>Refactor candidates</h2>
-          <p class="lead">Sizeable but loosely-knit communities (lowest cohesion) — likely doing too many things and worth splitting.</p>
-          <div class="grid cols-3">
-            ${refactor.map((c) => `
-              <div class="card">
-                <div class="card-title">${esc(c.label)}</div>
-                <div class="card-sub">${c.size} nodes · cohesion ${c.cohesion.toFixed(3)}</div>
-                <div class="bar low"><span style="width:${Math.round(c.cohesion * 100)}%"></span></div>
-                <div>${(c.members || []).map((m) => `<span class="chip">${esc(m.name)}</span>`).join("")}</div>
-              </div>`).join("")}
-          </div>
-        </div>`);
-    }
-
-    const questions = intel.questions || [];
-    if (questions.length) {
-      sections.push(`
-        <div class="intel-section">
-          <h2>Start here — suggested questions</h2>
-          <p class="lead">Generated from the graph structure, answered by traversing it (no LLM, no cost).</p>
-          <div class="grid cols-2">
-            ${questions.map((q) => `
-              <div class="card">
-                <div class="card-title">${link(q.wiki_url, q.question)}</div>
-                <p class="card-sub">${esc(q.answer)}</p>
-              </div>`).join("")}
-          </div>
-        </div>`);
-    }
-
-    const maxSize = Math.max(1, ...intel.communities.map((c) => c.size));
-    sections.push(`
-      <div class="intel-section">
-        <h2>Community cohesion</h2>
-        <p class="lead">How tightly knit each detected community is. Larger, low-cohesion clusters are candidates for splitting.</p>
-        <div class="grid cols-3">
-          ${intel.communities.slice(0, 24).map((c) => `
-            <div class="card">
-              <div class="card-title">${esc(c.label)}</div>
-              <div class="card-sub">${c.size} nodes · cohesion ${c.cohesion.toFixed(3)}</div>
-              <div class="bar"><span style="width:${Math.round((c.size / maxSize) * 100)}%"></span></div>
-              <div>${c.members.map((m) => `<span class="chip">${esc(m.name)}</span>`).join("")}</div>
-            </div>`).join("")}
-        </div>
-      </div>`);
-
-    host.innerHTML = sections.join("");
+    const hotspots = intel.impact_hotspots || [];
+    const boundaries = intel.cross_boundaries || [];
+    const lineage = intel.data_lineage || [];
+    const orphans = intel.orphan_groups || [];
+    const ownership = intel.ownership_gaps || [];
+    const relationshipRows = (rows) => rows.map((row) => `
+      <div class="card">
+        <div class="card-title">${esc(row.source)} <span class="card-sub">${esc(friendlyRelation(row.predicate))}</span> ${esc(row.target)}</div>
+        <div class="card-sub">${esc(row.source_area || row.source_type || "")}${row.target_area || row.target_type ? " → " + esc(row.target_area || row.target_type) : ""}</div>
+        ${Number(row.count || 0) > 1 ? `<div class="answer-meta">${Number(row.count).toLocaleString()} supporting relationships</div>` : ""}
+        ${row.evidence ? `<p class="evidence">${esc(row.evidence)}</p>` : ""}
+        ${row.source_path ? `<div class="answer-meta">${esc(row.source_path)}</div>` : ""}
+      </div>`).join("") || '<p class="placeholder">No findings in this category.</p>';
+    // Ranked bar chart: bar length is comparative degree, so the biggest change
+    // radius reads at a glance instead of as a wall of identical number cards.
+    const maxDegree = Math.max(1, ...hotspots.map((item) => Number(item.degree || 0)));
+    const truncatedList = (items, render) => items.slice(0, 6).map(render).join("")
+      + (items.length > 6 ? `<div class="card-sub">+${items.length - 6} more</div>` : "");
+    host.innerHTML = `
+      <section class="intel-section"><h2>Impact hotspots</h2>
+        <p class="lead">Measured fan-in and fan-out identify components with the largest likely change radius. This is an inspection priority, not an automatic refactor verdict.</p>
+        <div class="hotspot-chart">${hotspots.map((item, index) => `<div class="card hotspot-card">
+          <div class="hotspot">
+            <span class="rank">${index + 1}</span>
+            <div class="hotspot-main">
+              <div class="card-title">${esc(item.name)} <span class="card-sub">${Number(item.degree || 0)} connections</span></div>
+              <div class="bar"><span style="width:${Math.max(3, Math.round(Number(item.degree || 0) / maxDegree * 100))}%"></span></div>
+              <div class="answer-meta">${esc(friendlyLabel(item.type))} · ${esc(item.area || "Unassigned")} · ${Number(item.fan_in || 0)} incoming · ${Number(item.fan_out || 0)} outgoing${item.source_path ? ` · ${esc(item.source_path)}` : ""}</div>
+            </div>
+          </div></div>`).join("") || '<p class="placeholder">No actionable hotspots detected.</p>'}</div>
+      </section>
+      <section class="intel-section"><h2>Cross-area dependencies</h2><p class="lead">Evidence-backed relationships that cross architecture boundaries.</p><div class="grid cols-2">${relationshipRows(boundaries)}</div></section>
+      <section class="intel-section"><h2>Model and data lineage</h2><p class="lead">Connections between architecture, datasets, models, predictions, and outputs.</p><div class="grid cols-2">${relationshipRows(lineage)}</div></section>
+      <section class="intel-section"><h2>Knowledge gaps</h2><p class="lead">Concrete omissions that reduce answer quality or ownership clarity.</p><div class="grid cols-3">
+        <div class="card"><div class="card-title">Orphaned mapped records</div><div class="metric-inline">${orphans.reduce((sum, item) => sum + Number(item.count || 0), 0)}</div><div class="answer-meta">Mapped records with no graph relationships.</div>${truncatedList(orphans, (item) => `<div class="card-sub">${esc(item.dataset)} · ${esc(item.type)}: ${Number(item.count)}</div>`)}</div>
+        <div class="card"><div class="card-title">Datasets without ownership</div><div class="metric-inline">${ownership.length}</div><div class="answer-meta">Datasets whose records declare no owner.</div>${truncatedList(ownership, (item) => `<div class="card-sub">${esc(item.dataset)} · ${Number(item.records)} records</div>`)}</div>
+        <div class="card"><div class="card-title">Relationships without evidence</div><div class="metric-inline">${Number((intel.evidence_gaps || {}).relationships_without_evidence || 0)}</div><div class="answer-meta">Relationships lacking a source path, evidence text, or source span.</div></div>
+      </div></section>`;
   }
 
   // ---------- changes (run-to-run diff) ----------
@@ -971,57 +1322,90 @@
     host.hidden = false;
     if (!changes || !changes.has_baseline) {
       host.innerHTML = `<div class="empty-state">No prior run to compare against yet.<br>
-        Re-run <code>ontology-agent run</code> after your sources change and this tab will show
+        Re-run <code>ontology-agent launch</code> after your sources change and this tab will show
         exactly what was added, removed and modified.</div>`;
       return;
     }
+    if (!changes.compatible) {
+      host.innerHTML = `<section class="intel-section"><h2>Comparison intentionally stopped</h2>
+        <div class="status-card warn">${esc(changes.incompatibility_reason || "The two runs used incompatible ingestion scopes.")}</div>
+        <p class="lead">Use this run as the new baseline. The next run with the same sources, mappings, limits, and extraction settings will produce a trustworthy change report.</p></section>`;
+      return;
+    }
     const s = changes.summary;
-    const entityRows = (rows) =>
+    const changed = s.entities_added + s.entities_removed + s.entities_modified
+      + s.relationships_added + s.relationships_removed;
+    if (!changed) {
+      host.innerHTML = `<div class="empty-state"><strong>No knowledge changes detected.</strong><br>
+        The current run matches its compatible baseline. Change a source or structured-data artifact,
+        then run <code>ontology-agent launch</code> again to see its impact.</div>`;
+      return;
+    }
+    const entityGroups = (rows) =>
       rows.map((r) => `<div class="card">
-        <div class="card-title">${link(r.wiki_url, r.name)}</div>
-        <div class="card-sub">${esc(r.type)}${r.community ? " · " + esc(r.community) : ""}</div>
+        <div class="card-title">${esc(r.label)}</div>
+        <div class="metric-inline">${Number(r.count).toLocaleString()}</div>
+        <div class="card-sub">${esc(r.category)}${r.change ? ` · ${esc(r.change)}` : ""}</div>
+        ${(r.representatives || []).map((name) => `<span class="chip">${esc(name)}</span>`).join("")}
       </div>`).join("") || `<p class="placeholder">None.</p>`;
-    const relRows = (rows) =>
-      rows.map((r) => `<div class="card">
-        <div class="card-title">${link(r.source_wiki, r.source)} <span class="card-sub">${esc(r.predicate)}</span> ${link(r.target_wiki, r.target)}</div>
-      </div>`).join("") || `<p class="placeholder">None.</p>`;
+    const relationshipGroups = (rows) => rows.map((r) => `<div class="card">
+      <div class="card-title">${esc(r.source)} → ${esc(r.target)}</div>
+      <div class="card-sub">${esc(friendlyRelation(r.predicate))} · ${Number(r.count).toLocaleString()} relationship${Number(r.count) === 1 ? "" : "s"}</div>
+    </div>`).join("") || `<p class="placeholder">None.</p>`;
+    const addedArchitecture = changes.entity_groups_added.filter((r) => r.category === "Architecture").map((r) => ({ ...r, change: "Added" }));
+    const removedArchitecture = changes.entity_groups_removed.filter((r) => r.category === "Architecture").map((r) => ({ ...r, change: "Removed" }));
+    const addedData = changes.entity_groups_added.filter((r) => r.category === "Business data").map((r) => ({ ...r, change: "Added" }));
+    const removedData = changes.entity_groups_removed.filter((r) => r.category === "Business data").map((r) => ({ ...r, change: "Removed" }));
     const sections = [];
 
     sections.push(`<div class="intel-section">
       <h2>Since the last run</h2>
-      <p class="lead">Renames appear as a removal + an addition (entity identity is name + type).</p>
+      <p class="lead">A decision-level summary grouped by architecture area, dataset, business concept, and relationship type. Individual records stay out of the primary view.</p>
       <div class="grid cols-3">
-        <div class="card"><div class="card-title">+${s.entities_added} / −${s.entities_removed}</div><div class="card-sub">entities added / removed</div></div>
-        <div class="card"><div class="card-title">~${s.entities_modified}</div><div class="card-sub">entities modified</div></div>
-        <div class="card"><div class="card-title">+${s.relationships_added} / −${s.relationships_removed}</div><div class="card-sub">relationships added / removed</div></div>
+        <div class="card"><div class="card-title">+${s.architecture_entities_added} / −${s.architecture_entities_removed}</div><div class="card-sub">architecture components</div></div>
+        <div class="card"><div class="card-title">+${s.business_records_added} / −${s.business_records_removed}</div><div class="card-sub">business records</div></div>
+        <div class="card"><div class="card-title">~${s.entities_modified}</div><div class="card-sub">components modified</div></div>
+        <div class="card"><div class="card-title">+${s.architecture_relationships_added} / −${s.architecture_relationships_removed}</div><div class="card-sub">architecture relationships</div></div>
+        <div class="card"><div class="card-title">+${s.business_relationships_added} / −${s.business_relationships_removed}</div><div class="card-sub">business-data relationships</div></div>
       </div>
     </div>`);
 
-    sections.push(`<div class="intel-section"><h2>Added entities</h2>
-      <div class="grid cols-3">${entityRows(changes.entities_added)}</div></div>`);
-    sections.push(`<div class="intel-section"><h2>Removed entities</h2>
-      <div class="grid cols-3">${entityRows(changes.entities_removed)}</div></div>`);
+    if (addedArchitecture.length || removedArchitecture.length || changes.modified_components.length) {
+      sections.push(`<div class="intel-section"><h2>Architecture and schema changes</h2>
+        <p class="lead">Stable components and boundaries—not volatile row-level events.</p>
+        <div class="grid cols-3">${entityGroups([...addedArchitecture, ...removedArchitecture])}</div></div>`);
+    }
 
-    if (changes.entities_modified.length) {
-      sections.push(`<div class="intel-section"><h2>Modified entities</h2>
-        <div class="grid cols-2">${changes.entities_modified.map((m) => `
-          <div class="card"><div class="card-title">${link(m.wiki_url, m.name)}</div>
+    if (addedData.length || removedData.length) {
+      sections.push(`<div class="intel-section"><h2>Business-data movement</h2>
+        <p class="lead">Record movement grouped by dataset and business concept. Only useful human names are shown.</p>
+        <div class="grid cols-3">${entityGroups([...addedData, ...removedData])}</div></div>`);
+    }
+
+    if (changes.modified_components.length) {
+      sections.push(`<div class="intel-section"><h2>Modified architecture components</h2>
+        <div class="grid cols-2">${changes.modified_components.map((m) => `
+          <div class="card"><div class="card-title">${esc(m.name)}</div>
           <div class="card-sub">${esc(m.type)}</div>
-          ${m.changes.map((c) => `<div class="kv"><strong>${esc(c.field)}</strong> ${esc(c.old || "∅")} → ${esc(c.new || "∅")}</div>`).join("")}
+          <div class="answer-meta">Changed: ${m.fields.map(esc).join(", ")}</div>
           </div>`).join("")}</div></div>`);
     }
 
-    sections.push(`<div class="intel-section"><h2>New relationships</h2>
-      <div class="grid cols-2">${relRows(changes.relationships_added)}</div></div>`);
-    sections.push(`<div class="intel-section"><h2>Removed relationships</h2>
-      <div class="grid cols-2">${relRows(changes.relationships_removed)}</div></div>`);
-
-    if (changes.communities_changed.length) {
-      sections.push(`<div class="intel-section"><h2>Communities that grew / shrank</h2>
-        <div class="grid cols-3">${changes.communities_changed.map((c) => `
-          <div class="card"><div class="card-title">${esc(c.label)}</div>
-          <div class="card-sub">${c.old_size} → ${c.new_size} nodes (${c.delta > 0 ? "+" : ""}${c.delta})</div></div>`).join("")}</div></div>`);
+    if ((changes.affected_components || []).length) {
+      sections.push(`<div class="intel-section"><h2>Affected upstream and downstream areas</h2>
+        <p class="lead">Direct neighbors of changed knowledge, grouped to avoid raw-record noise.</p>
+        <div class="grid cols-3">${changes.affected_components.map((item) => `<div class="card">
+          <div class="card-title">${esc(item.name)}</div>
+          <div class="card-sub">${esc(item.direction)} · ${esc(item.type)} · ${esc(item.area)}</div>
+          <div class="answer-meta">${Number(item.relationship_count).toLocaleString()} affected relationship${Number(item.relationship_count) === 1 ? "" : "s"}</div>
+          ${(item.predicates || []).map((predicate) => `<span class="chip">${esc(friendlyRelation(predicate))}</span>`).join("")}
+        </div>`).join("")}</div></div>`);
     }
+
+    if (changes.relationship_groups_added.length) sections.push(`<div class="intel-section"><h2>New relationships</h2>
+      <div class="grid cols-2">${relationshipGroups(changes.relationship_groups_added)}</div></div>`);
+    if (changes.relationship_groups_removed.length) sections.push(`<div class="intel-section"><h2>Removed relationships</h2>
+      <div class="grid cols-2">${relationshipGroups(changes.relationship_groups_removed)}</div></div>`);
     host.innerHTML = sections.join("");
   }
 })();
